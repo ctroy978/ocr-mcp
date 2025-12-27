@@ -6,8 +6,8 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Data Preparation' (Protocol in workflow.md) 65c7ddd
 
 ## Phase 2: Scrubber Implementation
-- [ ] Task: Write Tests for the Scrubber logic (regex matching, 20-line limit)
-- [ ] Task: Implement the Scrubber tool class
+- [x] Task: Write Tests for the Scrubber logic (regex matching, 20-line limit) bcdc5dd
+- [x] Task: Implement the Scrubber tool class bcdc5dd
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Scrubber Implementation' (Protocol in workflow.md)
 
 ## Phase 3: Integration
