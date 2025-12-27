@@ -1,7 +1,7 @@
 # Track Plan: Refactor for Modularity and Implement OCR & Cleanup Tools
 
 ## Phase 1: Modular Framework & Job Management
-- [ ] Task: Design and implement the `JobManager` for unique IDs and directory handling
+- [x] Task: Design and implement the `JobManager` for unique IDs and directory handling 1ebecb6
 - [ ] Task: Implement common JSONL reader/writer utilities
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Modular Framework & Job Management' (Protocol in workflow.md)
 
