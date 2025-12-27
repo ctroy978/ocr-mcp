@@ -14,3 +14,4 @@ wheels/
 !.env.example  # To explicitly include a safe template file
 
 batchocr
+.coverage
