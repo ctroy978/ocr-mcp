@@ -7,8 +7,8 @@
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Modular Framework & Job Management' (Protocol in workflow.md)
 
 ## Phase 2: OCR Tool Implementation
-- [ ] Task: Write Tests for the modular OCR tool
-- [ ] Task: Implement the OCR tool by refactoring existing logic in `server.py`
+- [x] Task: Write Tests for the modular OCR tool 0561e19
+- [x] Task: Implement the OCR tool by refactoring existing logic in `server.py` 809cdfd
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: OCR Tool Implementation' (Protocol in workflow.md)
 
 ## Phase 3: Cleanup Tool Implementation
