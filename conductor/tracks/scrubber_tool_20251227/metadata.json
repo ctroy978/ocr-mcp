@@ -1,0 +1,8 @@
+{
+  "track_id": "scrubber_tool_20251227",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2025-12-27T14:30:00Z",
+  "updated_at": "2025-12-27T14:30:00Z",
+  "description": "Implement a local PII Scrubber Tool that uses CSV-based name lists to redact student names from the first 20 lines of essays before AI processing."
+}
