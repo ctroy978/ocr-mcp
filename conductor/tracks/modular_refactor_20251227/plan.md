@@ -2,7 +2,8 @@
 
 ## Phase 1: Modular Framework & Job Management
 - [x] Task: Design and implement the `JobManager` for unique IDs and directory handling 1ebecb6
-- [ ] Task: Implement common JSONL reader/writer utilities
+- [x] Task: Implement common JSONL reader/writer utilities 742ad5c
+- [ ] Task: Conductor - User Manual Verification 'Phase 1: Modular Framework & Job Management' (Protocol in workflow.md)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Modular Framework & Job Management' (Protocol in workflow.md)
 
 ## Phase 2: OCR Tool Implementation
