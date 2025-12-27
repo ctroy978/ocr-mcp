@@ -1,0 +1,1 @@
+{"mcpServers": {"ocr-server": {"command": "python", "args": ["server.py"], "name": "OCR-MCP Server", "description": "FastMCP server for document OCR processing"}}}

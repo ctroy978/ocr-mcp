@@ -1,0 +1,13 @@
+[project]
+name = "edmcp"
+version = "0.1.0"
+description = "OCR-MCP Server - FastMCP server for document OCR processing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "pdf2image>=1.2.0",
+    "regex>=2023.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.2.1",
+]
