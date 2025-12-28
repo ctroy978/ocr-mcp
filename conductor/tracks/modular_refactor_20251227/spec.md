@@ -1,20 +1,21 @@
 # Track Spec: Refactor for Modularity and Implement OCR & Cleanup Tools
 
 ## Overview
-The goal is to transition from a monolithic FastMCP server to a modular, multi-tool pipeline. Each tool (OCR, Cleanup, etc.) will be a discrete component that handles a single task and hands off data via JSONL files in uniquely identified job directories.
+The goal is to transition from a monolithic FastMCP server to a modular, multi-tool pipeline. Each tool (OCR, Cleanup, etc.) will be a discrete component that handles a single task. Data handoff and state management will be handled by an embedded SQLite database, replacing file-based JSONL passing.
 
 ## Architecture
-- **Job Directory:** A unique directory (UUID or timestamp-based) for each batch job.
-- **JSONL Handoff:** Tools read from an input JSONL and write to an output JSONL.
+- **Database:** SQLite (`edmcp.db`) stores job state, student records, and essay text.
+- **Job Management:** Tools operate on Job IDs passed by the agent.
 - **Modular Tools:**
-  - **Framework:** Common logic for managing job IDs, directories, and JSONL I/O.
-  - **OCR Tool:** Ported from existing logic, uses Qwen-VL to process images/PDFs.
-  - **Cleanup Tool:** New tool using xAI to scrub PII (names) and normalize OCR output.
+  - **Framework:** Common logic for database access and job management.
+  - **OCR Tool:** Processes PDFs, extracts text/names, and saves raw results to DB.
+  - **Scrubber Tool:** Reads raw text from DB, applies regex scrubbing, and updates DB.
+  - **Cleanup Tool:** Reads scrubbed text from DB, uses xAI for text normalization (typo fixing), and updates DB.
 
 ## Technical Details
-- **Handoff Format:**
-  ```jsonl
-  {"job_id": "job_123", "student_id": "std_001", "text": "...", "metadata": {...}}
-  ```
-- **OCR Tool:** Input: File paths. Output: Extracted text in JSONL.
-- **Cleanup Tool:** Input: JSONL from OCR. Output: Normalized text with PII removed.
+- **Schema (Provisional):**
+  - `jobs`: id, created_at, status
+  - `essays`: id, job_id, student_name (detected), raw_text, scrubbed_text, normalized_text, status
+- **OCR Tool:** Input: File paths. Output: DB records.
+- **Scrubber Tool:** Input: Job ID. Output: Updates `scrubbed_text` in DB.
+- **Cleanup Tool:** Input: Job ID. Output: Updates `normalized_text` in DB.

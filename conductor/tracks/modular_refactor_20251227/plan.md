@@ -11,12 +11,19 @@
 - [x] Task: Implement the OCR tool by refactoring existing logic in `server.py` 809cdfd
 - [x] Task: Conductor - User Manual Verification 'Phase 2: OCR Tool Implementation' (Protocol in workflow.md) ba0cc83
 
-## Phase 3: Cleanup Tool Implementation
-- [ ] Task: Write Tests for the Cleanup tool (PII scrubbing & normalization)
-- [ ] Task: Implement the Cleanup tool using xAI API
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Cleanup Tool Implementation' (Protocol in workflow.md)
+## Phase 3: Database Infrastructure & Migration
+- [ ] Task: Design and implement `DatabaseManager` with SQLite schema (jobs, essays)
+- [ ] Task: Refactor `JobManager` to utilize `DatabaseManager`
+- [ ] Task: Refactor `OCRTool` (server.py logic) to write results to SQLite
+- [ ] Task: Update `Scrubber` integration to read/write from SQLite
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: Database Infrastructure & Migration' (Protocol in workflow.md)
 
-## Phase 4: Integration & Batch Processing
-- [ ] Task: Implement a coordinator tool or script to chain OCR and Cleanup
-- [ ] Task: Test the pipeline with a batch of 40+ sample essays
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Integration & Batch Processing' (Protocol in workflow.md)
+## Phase 4: Cleanup Tool (Normalization)
+- [ ] Task: Write Tests for the Cleanup tool (Normalization logic)
+- [ ] Task: Implement the Cleanup tool using xAI API for text normalization (typo fixing)
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: Cleanup Tool (Normalization)' (Protocol in workflow.md)
+
+## Phase 5: Integration & Batch Processing
+- [ ] Task: Implement a coordinator tool to manage the DB-driven pipeline
+- [ ] Task: Test the full pipeline (OCR -> Scrub -> Normalize) with sample data
+- [ ] Task: Conductor - User Manual Verification 'Phase 5: Integration & Batch Processing' (Protocol in workflow.md)
