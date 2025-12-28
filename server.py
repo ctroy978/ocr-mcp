@@ -473,6 +473,49 @@ def _scrub_processed_job_core(job_id: str) -> dict:
         "errors": errors if errors else None
     }
 
+def _scrub_processed_job_core(job_id: str) -> dict:
+    """Core logic for scrubbing a job."""
+    print(f"[Scrubber-MCP] Scrubbing Job {job_id}...", file=sys.stderr)
+    
+    # 1. Get essays from DB
+    essays = DB_MANAGER.get_job_essays(job_id)
+    
+    if not essays:
+        return {"status": "warning", "message": f"No essays found for job {job_id}"}
+    
+    scrubbed_count = 0
+    errors = []
+    
+    for essay in essays:
+        try:
+            essay_id = essay['id']
+            raw_text = essay['raw_text']
+            
+            # 2. Scrub
+            if raw_text:
+                scrubbed_text = SCRUBBER.scrub_text(raw_text)
+            else:
+                scrubbed_text = ""
+
+            # 3. Update DB
+            DB_MANAGER.update_essay_scrubbed(essay_id, scrubbed_text)
+            scrubbed_count += 1
+            
+        except Exception as e:
+            error_msg = f"Essay {essay['id']}: {str(e)}"
+            print(f"[Scrubber-MCP] Error scrubbing essay {essay['id']}: {e}", file=sys.stderr)
+            errors.append(error_msg)
+            
+    print(f"[Scrubber-MCP] Job {job_id} Scrubbed. {scrubbed_count}/{len(essays)} essays processed.", file=sys.stderr)
+    
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "scrubbed_count": scrubbed_count,
+        "total_essays": len(essays),
+        "errors": errors if errors else None
+    }
+
 @mcp.tool
 def scrub_processed_job(job_id: str) -> dict:
     """
@@ -486,6 +529,87 @@ def scrub_processed_job(job_id: str) -> dict:
         Summary of scrubbing operation.
     """
     return _scrub_processed_job_core(job_id)
+
+def _normalize_processed_job_core(job_id: str, model: Optional[str] = None) -> dict:
+    """Core logic for normalizing text in a job using xAI."""
+    print(f"[Cleanup-MCP] Normalizing Job {job_id}...", file=sys.stderr)
+    
+    # Resolve model: Argument -> Env Var -> Default
+    model = model or os.environ.get("XAI_API_MODEL") or "grok-beta"
+    
+    # Get client
+    try:
+        client = get_openai_client()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to get AI client: {e}"}
+
+    # 1. Get essays from DB
+    essays = DB_MANAGER.get_job_essays(job_id)
+    
+    if not essays:
+        return {"status": "warning", "message": f"No essays found for job {job_id}"}
+    
+    normalized_count = 0
+    errors = []
+    
+    for essay in essays:
+        try:
+            essay_id = essay['id']
+            # Prioritize scrubbed text for normalization
+            text_to_normalize = essay['scrubbed_text'] or essay['raw_text']
+            
+            if not text_to_normalize:
+                continue
+
+            # 2. Call AI for Normalization
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are a text normalization assistant. Your task is to fix OCR errors, typos, and minor grammatical issues while preserving the original meaning and tone of the student's essay. Do not add comments or change the structure significantly. Return ONLY the normalized text."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Normalize the following text:\n\n{text_to_normalize}"
+                    }
+                ],
+            )
+            normalized_text = response.choices[0].message.content.strip()
+            
+            # 3. Update DB
+            DB_MANAGER.update_essay_normalized(essay_id, normalized_text)
+            normalized_count += 1
+            
+        except Exception as e:
+            error_msg = f"Essay {essay['id']}: {str(e)}"
+            print(f"[Cleanup-MCP] Error normalizing essay {essay['id']}: {e}", file=sys.stderr)
+            errors.append(error_msg)
+            
+    print(f"[Cleanup-MCP] Job {job_id} Normalized. {normalized_count}/{len(essays)} essays processed.", file=sys.stderr)
+    
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "normalized_count": normalized_count,
+        "total_essays": len(essays),
+        "errors": errors if errors else None
+    }
+
+@mcp.tool
+def normalize_processed_job(job_id: str, model: Optional[str] = None) -> dict:
+    """
+    Normalizes text (fixing OCR typos) for all essays in a processed job using AI.
+    Reads scrubbed text from DB and updates the normalized_text field.
+    
+    Args:
+        job_id: The ID of the job to normalize.
+        model: The AI model to use (default: env XAI_API_MODEL or grok-beta).
+        
+    Returns:
+        Summary of normalization operation.
+    """
+    return _normalize_processed_job_core(job_id, model)
 
 if __name__ == "__main__":
     mcp.run()
