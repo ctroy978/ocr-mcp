@@ -1,50 +1,32 @@
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Union
+from edmcp.core.db import DatabaseManager
 
 class JobManager:
     """
-    Manages job IDs and directory structures for the OCR-MCP pipeline.
+    Manages jobs for the OCR-MCP pipeline, handling both DB state and filesystem.
     """
 
-    @staticmethod
-    def generate_job_id() -> str:
-        """
-        Generates a unique job ID combining a timestamp and a UUID short code.
-        Format: YYYYMMDD_HHMMSS_shortuuid
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_suffix = str(uuid.uuid4())[:8]
-        return f"{timestamp}_{unique_suffix}"
+    def __init__(self, base_path: Union[str, Path], db: DatabaseManager):
+        self.base_path = Path(base_path)
+        self.db = db
 
-    @staticmethod
-    def create_job_directory(job_id: str, base_path: Union[str, Path]) -> Path:
+    def create_job(self) -> str:
         """
-        Creates a dedicated directory for a job.
+        Creates a new job:
+        1. Creates a record in the database.
+        2. Creates the job directory on disk.
         
-        Args:
-            job_id: The unique identifier for the job.
-            base_path: The root directory where jobs are stored.
-            
         Returns:
-            Path: The path to the created job directory.
+            str: The Job ID.
         """
-        base = Path(base_path)
-        job_dir = base / job_id
+        job_id = self.db.create_job()
+        job_dir = self.base_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
+        return job_id
 
-    @staticmethod
-    def get_job_directory(job_id: str, base_path: Union[str, Path]) -> Path:
+    def get_job_directory(self, job_id: str) -> Path:
         """
-        Constructs the path for a job directory without creating it.
-        
-        Args:
-            job_id: The unique identifier for the job.
-            base_path: The root directory where jobs are stored.
-            
-        Returns:
-            Path: The path to the job directory.
+        Returns the path to the job directory.
         """
-        return Path(base_path) / job_id
+        return self.base_path / job_id

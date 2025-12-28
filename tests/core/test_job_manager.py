@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 import pytest
 from edmcp.core.job_manager import JobManager
+from edmcp.core.db import DatabaseManager
 
 @pytest.fixture
 def temp_workspace(tmp_path):
@@ -10,40 +11,34 @@ def temp_workspace(tmp_path):
     yield workspace
     shutil.rmtree(workspace)
 
-def test_create_job_id_is_unique():
-    """Test that generated job IDs are unique."""
-    id1 = JobManager.generate_job_id()
-    id2 = JobManager.generate_job_id()
-    assert id1 != id2
-    assert isinstance(id1, str)
-    assert len(id1) > 0
+@pytest.fixture
+def db_manager():
+    return DatabaseManager(":memory:")
 
-def test_create_job_directory(temp_workspace):
-    """Test creating a job directory."""
-    job_id = "test_job_123"
-    job_dir = JobManager.create_job_directory(job_id, temp_workspace)
+@pytest.fixture
+def job_manager(temp_workspace, db_manager):
+    return JobManager(temp_workspace, db_manager)
+
+def test_create_job(job_manager):
+    """Test creating a job (DB record + Directory)."""
+    job_id = job_manager.create_job()
     
+    # Check Directory
+    job_dir = job_manager.get_job_directory(job_id)
     assert job_dir.exists()
     assert job_dir.is_dir()
-    assert job_dir.name == job_id
-    assert job_dir.parent == temp_workspace
-
-def test_create_job_directory_creates_parents(temp_workspace):
-    """Test that parent directories are created if they don't exist."""
-    nested_workspace = temp_workspace / "nested" / "storage"
-    job_id = "nested_job"
     
-    # workspace doesn't fully exist yet
-    job_dir = JobManager.create_job_directory(job_id, nested_workspace)
-    
-    assert job_dir.exists()
-    assert nested_workspace.exists()
+    # Check DB
+    cursor = job_manager.db.conn.cursor()
+    cursor.execute("SELECT id FROM jobs WHERE id=?", (job_id,))
+    row = cursor.fetchone()
+    assert row is not None
+    assert row[0] == job_id
 
-def test_get_job_directory(temp_workspace):
+def test_get_job_directory(job_manager):
     """Test retrieving a job directory path."""
-    job_id = "existing_job"
-    expected_path = temp_workspace / job_id
+    job_id = "test_job_123" # Manually construct path, though job might not exist in DB for this specific test
+    expected_path = job_manager.base_path / job_id
     
-    path = JobManager.get_job_directory(job_id, temp_workspace)
+    path = job_manager.get_job_directory(job_id)
     assert path == expected_path
-    # Does not necessarily check existence, just path construction
