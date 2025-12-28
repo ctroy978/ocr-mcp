@@ -14,3 +14,8 @@
 ## Phase 3: Integration & Testing [checkpoint: 2cf215c]
 - [x] Task: Create a full end-to-end test script (OCR -> Scrub -> Evaluate) 8eeb1a7
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Integration & Testing' (Protocol in workflow.md) 8eeb1a7
+
+## Phase 4: Refinement (Structured Feedback) [checkpoint: 80c5541]
+- [x] Task: Update prompt template for structured JSON feedback (criteria, quotes, rewrites) 80c5541
+- [x] Task: Update server logic to handle 'overall_score' and new JSON schema 80c5541
+- [x] Task: Update tests to match new schema 80c5541
