@@ -11,6 +11,6 @@
 - [x] Task: Implement `evaluate_job` tool in `server.py` 1cabef6
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Evaluation Tool Implementation' (Protocol in workflow.md) d388dea
 
-## Phase 3: Integration & Testing
-- [ ] Task: Create a full end-to-end test script (OCR -> Scrub -> Evaluate)
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Integration & Testing' (Protocol in workflow.md)
+## Phase 3: Integration & Testing [checkpoint: 2cf215c]
+- [x] Task: Create a full end-to-end test script (OCR -> Scrub -> Evaluate) 8eeb1a7
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Integration & Testing' (Protocol in workflow.md) 8eeb1a7
