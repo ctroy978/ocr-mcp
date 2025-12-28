@@ -10,6 +10,6 @@
 - [x] Task: Implement the Scrubber tool class bcdc5dd
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Scrubber Implementation' (Protocol in workflow.md) 33995a9
 
-## Phase 3: Integration
+## Phase 3: Integration [checkpoint: 100c4b0]
 - [x] Task: Integrate Scrubber into the JSONL handoff pipeline 5a44762
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Integration' (Protocol in workflow.md) 08e112b
