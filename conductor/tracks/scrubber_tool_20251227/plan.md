@@ -11,5 +11,5 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Scrubber Implementation' (Protocol in workflow.md) 33995a9
 
 ## Phase 3: Integration
-- [ ] Task: Integrate Scrubber into the JSONL handoff pipeline
+- [x] Task: Integrate Scrubber into the JSONL handoff pipeline 5a44762
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Integration' (Protocol in workflow.md)
