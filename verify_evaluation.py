@@ -26,8 +26,18 @@ def verify():
         mock_get_client.return_value = mock_client
         
         eval_data = {
-            "score": "B+",
-            "comments": "Good focus on the theme of loss.",
+            "criteria": [
+                {
+                    "name": "Theme",
+                    "score": "B+",
+                    "feedback": {
+                        "examples": ["Good focus."],
+                        "advice": "More depth.",
+                        "rewritten_example": "N/A"
+                    }
+                }
+            ],
+            "overall_score": "B+",
             "summary": "Solid understanding."
         }
         mock_response = MagicMock()

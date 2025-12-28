@@ -188,18 +188,25 @@ def aggregate_tests(pages: Iterable[PageResult], *, unknown_prefix: str = "Unkno
         aggregates.append(aggregate)
     return aggregates
 
-def get_openai_client() -> OpenAI:
-    api_key = os.environ.get("QWEN_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    base_url = os.environ.get("QWEN_BASE_URL")
+def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = None) -> OpenAI:
+    """
+    Creates an OpenAI-compatible client.
+    Priority: Provided args -> Environment variables -> Default Base URLs.
+    """
+    api_key = api_key or os.environ.get("OPENAI_API_KEY")
     
     if not api_key:
-        raise ValueError("QWEN_API_KEY or OPENAI_API_KEY environment variable is required.")
+        # Fallback for OCR specifically if OPENAI_API_KEY not set
+        api_key = os.environ.get("QWEN_API_KEY")
+        
+    if not api_key:
+        raise ValueError("API Key is required. Please check your .env file.")
 
-    # Auto-detect OpenRouter based on key prefix
+    # Auto-detect Base URL if not provided
     if not base_url:
         if api_key.startswith("sk-or-"):
             base_url = "https://openrouter.ai/api/v1"
-        else:
+        elif "dashscope" in (os.environ.get("QWEN_BASE_URL") or ""):
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         
     return OpenAI(api_key=api_key, base_url=base_url)
@@ -236,7 +243,11 @@ def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
-    client = get_openai_client()
+    # Use OCR-specific configuration
+    client = get_openai_client(
+        api_key=os.environ.get("QWEN_API_KEY"),
+        base_url=os.environ.get("QWEN_BASE_URL")
+    )
     
     # Convert PDF to images
     images = convert_from_path(pdf_path, dpi=dpi)
@@ -322,7 +333,11 @@ def extract_text_from_image(
         return {"status": "error", "message": f"File not found: {image_path}"}
 
     try:
-        client = get_openai_client()
+        # Use OCR-specific configuration
+        client = get_openai_client(
+            api_key=os.environ.get("QWEN_API_KEY"),
+            base_url=os.environ.get("QWEN_BASE_URL")
+        )
         
         with open(image_path, "rb") as f:
             image_bytes = f.read()
@@ -502,11 +517,14 @@ def _normalize_processed_job_core(job_id: str, model: Optional[str] = None) -> d
     print(f"[Cleanup-MCP] Normalizing Job {job_id}...", file=sys.stderr)
     
     # Resolve model: Argument -> Env Var -> Default
-    model = model or os.environ.get("XAI_API_MODEL") or "grok-beta"
+    model = model or os.environ.get("CLEANING_API_MODEL") or os.environ.get("XAI_API_MODEL") or "grok-beta"
     
     # Get client
     try:
-        client = get_openai_client()
+        client = get_openai_client(
+            api_key=os.environ.get("CLEANING_API_KEY") or os.environ.get("XAI_API_KEY"),
+            base_url=os.environ.get("CLEANING_BASE_URL") or os.environ.get("XAI_BASE_URL")
+        )
     except Exception as e:
         return {"status": "error", "message": f"Failed to get AI client: {e}"}
 
@@ -572,7 +590,10 @@ def _evaluate_job_core(job_id: str, rubric: str, context_material: str, model: O
     
     # Get client
     try:
-        client = get_openai_client()
+        client = get_openai_client(
+            api_key=os.environ.get("EVALUATION_API_KEY") or os.environ.get("XAI_API_KEY"),
+            base_url=os.environ.get("EVALUATION_BASE_URL") or os.environ.get("XAI_BASE_URL")
+        )
     except Exception as e:
         return {"status": "error", "message": f"Failed to get AI client: {e}"}
 
@@ -616,7 +637,8 @@ def _evaluate_job_core(job_id: str, rubric: str, context_material: str, model: O
             grade = None
             try:
                 eval_data = json.loads(eval_json_str)
-                grade = str(eval_data.get("score", ""))
+                # Look for 'overall_score' (new prompt) or 'score' (fallback)
+                grade = str(eval_data.get("overall_score") or eval_data.get("score") or "")
             except json.JSONDecodeError:
                 pass # Fallback to None grade, but keep raw JSON
             

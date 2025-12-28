@@ -33,8 +33,18 @@ def verify_end_to_end():
         
         # Mock AI Response for Evaluation
         eval_data = {
-            "score": "95/100",
-            "comments": "Excellent summary.",
+            "criteria": [
+                {
+                    "name": "Accuracy",
+                    "score": "95/100",
+                    "feedback": {
+                        "examples": ["Correct details."],
+                        "advice": "None.",
+                        "rewritten_example": "N/A"
+                    }
+                }
+            ],
+            "overall_score": "95/100",
             "summary": "Great job."
         }
         mock_response = MagicMock()

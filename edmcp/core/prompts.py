@@ -3,13 +3,11 @@ from typing import Optional
 def get_evaluation_prompt(essay_text: str, rubric: str, context_material: str, system_instructions: Optional[str] = None) -> str:
     """
     Constructs the prompt for AI-based essay evaluation.
-    Forces JSON output for easier parsing of score and comments.
+    Forces detailed, structured JSON output with criteria-specific feedback.
     """
     
     default_instructions = (
-        "You are an expert academic evaluator. Your task is to grade the provided student essay "
-        "based strictly on the grading rubric and the provided context/source material. "
-        "Maintain high standards and provide constructive, specific feedback."
+        "You are an expert academic evaluator specializing in providing consistent, structured feedback."
     )
     
     instructions = system_instructions or default_instructions
@@ -31,11 +29,33 @@ def get_evaluation_prompt(essay_text: str, rubric: str, context_material: str, s
 
 ---
 # OUTPUT INSTRUCTIONS:
-Return your evaluation in JSON format with the following keys:
-1. "score": A numeric value or letter grade as defined by the rubric.
-2. "comments": A detailed explanation of the score, referencing specific parts of the essay and the rubric.
-3. "summary": A brief (1-2 sentence) summary of the student's performance.
+Evaluate the student's essay strictly according to the provided grading rubric. First, identify the distinct criteria from the rubric (e.g., "grammar", "theme").
 
-Return ONLY the JSON object. Do not add any introductory or concluding text.
+For each criterion:
+- Assign a score based on the points specified in the rubric.
+- Provide feedback in this exact format:
+  1. Specific examples: Quote 1-3 direct examples from the essay that justify the score.
+  2. Advice on improvement: Give 1-2 actionable suggestions.
+  3. Rewritten example: Provide a rewritten version of one of the quoted examples.
+
+You must output ONLY a valid JSON object. The JSON must follow this exact structure:
+
+{{
+  "criteria": [
+    {{
+      "name": "Criterion Name",
+      "score": "Numeric score or letter grade",
+      "feedback": {{
+        "examples": ["quote 1", "quote 2"],
+        "advice": "Actionable advice string",
+        "rewritten_example": "Improved version string"
+      }}
+    }}
+  ],
+  "overall_score": "Total score as a string (e.g. '95', 'A', '18/20')",
+  "summary": "A brief overall summary of the essay's strengths and weaknesses."
+}}
+
+Do not add extra keys, explanations, or text outside the JSON.
 """
     return prompt.strip()

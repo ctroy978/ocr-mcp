@@ -33,8 +33,18 @@ class TestEvaluationTool(unittest.TestCase):
         
         # Mock AI JSON response
         eval_data = {
-            "score": "A",
-            "comments": "Excellent analysis.",
+            "criteria": [
+                {
+                    "name": "Content",
+                    "score": "A",
+                    "feedback": {
+                        "examples": ["Good points."],
+                        "advice": "Keep it up.",
+                        "rewritten_example": "N/A"
+                    }
+                }
+            ],
+            "overall_score": "A",
             "summary": "High quality."
         }
         mock_response = MagicMock()
