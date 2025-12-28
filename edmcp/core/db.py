@@ -39,12 +39,30 @@ class DatabaseManager:
                 raw_text TEXT,
                 scrubbed_text TEXT,
                 normalized_text TEXT,
+                evaluation TEXT,
+                grade TEXT,
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 metadata TEXT,
                 FOREIGN KEY (job_id) REFERENCES jobs (id)
             )
         """)
         
+        self.conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Adds missing columns to existing tables."""
+        cursor = self.conn.cursor()
+        
+        # Check for columns in essays
+        cursor.execute("PRAGMA table_info(essays)")
+        columns = {row[1] for row in cursor.fetchall()}
+        
+        if "evaluation" not in columns:
+            cursor.execute("ALTER TABLE essays ADD COLUMN evaluation TEXT")
+        if "grade" not in columns:
+            cursor.execute("ALTER TABLE essays ADD COLUMN grade TEXT")
+            
         self.conn.commit()
 
     def create_job(self) -> str:
@@ -88,6 +106,32 @@ class DatabaseManager:
             WHERE id = ?
             """,
             (scrubbed_text, essay_id)
+        )
+        self.conn.commit()
+
+    def update_essay_normalized(self, essay_id: int, normalized_text: str):
+        """Updates an essay with normalized text and sets status to NORMALIZED."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE essays 
+            SET normalized_text = ?, status = 'NORMALIZED' 
+            WHERE id = ?
+            """,
+            (normalized_text, essay_id)
+        )
+        self.conn.commit()
+
+    def update_essay_evaluation(self, essay_id: int, evaluation_json: str, grade: Optional[str] = None):
+        """Updates an essay with evaluation results and sets status to GRADED."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE essays 
+            SET evaluation = ?, grade = ?, status = 'GRADED' 
+            WHERE id = ?
+            """,
+            (evaluation_json, grade, essay_id)
         )
         self.conn.commit()
 
