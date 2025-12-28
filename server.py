@@ -21,6 +21,8 @@ from dotenv import load_dotenv, find_dotenv
 
 from edmcp.core.name_loader import NameLoader
 from edmcp.tools.scrubber import Scrubber
+from edmcp.core.db import DatabaseManager
+from edmcp.core.job_manager import JobManager
 
 # Load environment variables from .env file
 load_dotenv(find_dotenv())
@@ -36,6 +38,12 @@ NAMES_DIR = Path(__file__).parent / "edmcp/data/names"
 loader = NameLoader(NAMES_DIR)
 all_names = loader.load_all_names()
 SCRUBBER = Scrubber(all_names)
+
+# Initialize DB and JobManager
+DB_PATH = "edmcp.db"
+JOBS_DIR = Path("data/jobs")
+DB_MANAGER = DatabaseManager(DB_PATH)
+JOB_MANAGER = JobManager(JOBS_DIR, DB_MANAGER)
 
 # Initialize the FastMCP server
 mcp = FastMCP("OCR-MCP Server")
@@ -221,7 +229,7 @@ def ocr_image_with_qwen(client: OpenAI, image_bytes: bytes, model: Optional[str]
     except Exception as e:
         raise RuntimeError(f"Qwen OCR failed: {str(e)}")
 
-def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None, unknown_label: str = "Unknown Student") -> dict:
+def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None, unknown_label: str = "Unknown Student", scrub: bool = True) -> dict:
     """Core logic to process a PDF and return raw results."""
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
@@ -246,11 +254,13 @@ def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None
         name = detect_name(text)
         continuation = detect_continuation_name(text)
         
-        # Scrub PII from text
-        scrubbed_text = SCRUBBER.scrub_text(text)
+        # Scrub PII from text if requested
+        final_text = text
+        if scrub:
+            final_text = SCRUBBER.scrub_text(text)
 
         page_results.append(
-            PageResult(number=i, text=scrubbed_text, detected_name=name, continuation_name=continuation)
+            PageResult(number=i, text=final_text, detected_name=name, continuation_name=continuation)
         )
         
     # Aggregate results
@@ -337,12 +347,13 @@ def batch_process_documents(
     dpi: int = 220
 ) -> dict:
     """
-    Process all PDF documents in a directory and save results to a unique JSONL file.
+    Process all PDF documents in a directory.
+    Saves raw results to SQLite database and legacy JSONL backup.
     Returns a Job ID and summary to the agent.
 
     Args:
         directory_path: Directory containing PDF files to process
-        output_directory: Directory where the unique JSONL output will be stored
+        output_directory: Directory where the unique JSONL output will be stored (Legacy/Backup)
         model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
         dpi: DPI for scanning
 
@@ -353,8 +364,8 @@ def batch_process_documents(
     if not input_path.exists():
         return {"status": "error", "message": f"Directory not found: {directory_path}"}
 
-    # Generate a unique Job ID
-    job_id = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    # Generate a unique Job ID via JobManager (creates DB record and directory)
+    job_id = JOB_MANAGER.create_job()
     
     out_dir = Path(output_directory)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -375,20 +386,30 @@ def batch_process_documents(
 
     print(f"[OCR-MCP] Starting Job {job_id}: Found {len(files)} files in {directory_path}", file=sys.stderr)
 
-    # Open the output file for writing (JSON Lines)
+    # Open the output file for writing (JSON Lines) - Backup
     import json
     with open(output_path, "w", encoding="utf-8") as f_out:
         for file_path in files:
             try:
                 print(f"[OCR-MCP] Processing {file_path.name}...", file=sys.stderr)
                 
-                # Process the PDF using the core logic
-                result = _process_pdf_core(str(file_path), dpi=dpi, model=model)
+                # Process the PDF using the core logic (SCRUB=FALSE for DB storage)
+                result = _process_pdf_core(str(file_path), dpi=dpi, model=model, scrub=False)
                 
-                # Write each student record as a separate line in the JSONL file
+                # Write each student record to DB and JSONL
                 for record in result.get("results", []):
-                    # Add Job ID to the record for traceability
+                    # Add Job ID to the record
                     record["job_id"] = job_id
+                    
+                    # Save to SQLite
+                    DB_MANAGER.add_essay(
+                        job_id=job_id,
+                        student_name=record['student_name'],
+                        raw_text=record['text'],
+                        metadata=record['metadata']
+                    )
+                    
+                    # Save to JSONL (Raw text for now)
                     f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
                     students_found += 1
                 
@@ -404,7 +425,7 @@ def batch_process_documents(
     return {
         "status": "success",
         "job_id": job_id,
-        "summary": f"Processed {files_processed} files. Found {students_found} student records.",
+        "summary": f"Processed {files_processed} files. Found {students_found} student records. Saved to DB and {output_path}",
         "output_file": str(output_path.absolute()),
         "errors": errors if errors else None
     }
