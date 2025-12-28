@@ -12,7 +12,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: OCR Tool Implementation' (Protocol in workflow.md) ba0cc83
 
 ## Phase 3: Database Infrastructure & Migration
-- [ ] Task: Design and implement `DatabaseManager` with SQLite schema (jobs, essays)
+- [x] Task: Design and implement `DatabaseManager` with SQLite schema (jobs, essays) 0094a68
 - [ ] Task: Refactor `JobManager` to utilize `DatabaseManager`
 - [ ] Task: Refactor `OCRTool` (server.py logic) to write results to SQLite
 - [ ] Task: Update `Scrubber` integration to read/write from SQLite
