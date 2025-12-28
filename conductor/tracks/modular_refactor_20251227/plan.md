@@ -11,11 +11,12 @@
 - [x] Task: Implement the OCR tool by refactoring existing logic in `server.py` 809cdfd
 - [x] Task: Conductor - User Manual Verification 'Phase 2: OCR Tool Implementation' (Protocol in workflow.md) ba0cc83
 
-## Phase 3: Database Infrastructure & Migration
+## Phase 3: Database Infrastructure & Migration [checkpoint: 84133c2]
 - [x] Task: Design and implement `DatabaseManager` with SQLite schema (jobs, essays) 0094a68
-- [ ] Task: Refactor `JobManager` to utilize `DatabaseManager`
-- [ ] Task: Refactor `OCRTool` (server.py logic) to write results to SQLite
-- [ ] Task: Update `Scrubber` integration to read/write from SQLite
+- [x] Task: Refactor `JobManager` to utilize `DatabaseManager` cbdcb76
+- [x] Task: Refactor `OCRTool` (server.py logic) to write results to SQLite eb9ea15
+- [x] Task: Update `Scrubber` integration to read/write from SQLite ce61bd1
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Database Infrastructure & Migration' (Protocol in workflow.md) d54da71
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Database Infrastructure & Migration' (Protocol in workflow.md)
 
 ## Phase 4: Cleanup Tool (Normalization)
