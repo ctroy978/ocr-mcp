@@ -341,27 +341,13 @@ import sys
 import uuid
 from datetime import datetime
 
-@mcp.tool
-def batch_process_documents(
+def _batch_process_documents_core(
     directory_path: str,
     output_directory: str,
     model: Optional[str] = None,
     dpi: int = 220
 ) -> dict:
-    """
-    Process all PDF documents in a directory.
-    Saves raw results to SQLite database and legacy JSONL backup.
-    Returns a Job ID and summary to the agent.
-
-    Args:
-        directory_path: Directory containing PDF files to process
-        output_directory: Directory where the unique JSONL output will be stored (Legacy/Backup)
-        model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
-        dpi: DPI for scanning
-
-    Returns:
-        Summary containing Job ID, counts, and the location of the output file.
-    """
+    """Core logic for batch processing documents."""
     input_path = Path(directory_path)
     if not input_path.exists():
         return {"status": "error", "message": f"Directory not found: {directory_path}"}
@@ -430,6 +416,29 @@ def batch_process_documents(
         "output_file": str(output_path.absolute()),
         "errors": errors if errors else None
     }
+
+@mcp.tool
+def batch_process_documents(
+    directory_path: str,
+    output_directory: str,
+    model: Optional[str] = None,
+    dpi: int = 220
+) -> dict:
+    """
+    Process all PDF documents in a directory.
+    Saves raw results to SQLite database and legacy JSONL backup.
+    Returns a Job ID and summary to the agent.
+
+    Args:
+        directory_path: Directory containing PDF files to process
+        output_directory: Directory where the unique JSONL output will be stored (Legacy/Backup)
+        model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
+        dpi: DPI for scanning
+
+    Returns:
+        Summary containing Job ID, counts, and the location of the output file.
+    """
+    return _batch_process_documents_core(directory_path, output_directory, model, dpi)
 
 def _scrub_processed_job_core(job_id: str) -> dict:
     """Core logic for scrubbing a job."""
