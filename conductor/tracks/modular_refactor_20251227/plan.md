@@ -20,8 +20,8 @@
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Database Infrastructure & Migration' (Protocol in workflow.md)
 
 ## Phase 4: Cleanup Tool (Normalization)
-- [ ] Task: Write Tests for the Cleanup tool (Normalization logic)
-- [ ] Task: Implement the Cleanup tool using xAI API for text normalization (typo fixing)
+- [x] Task: Write Tests for the Cleanup tool (Normalization logic) 00ce8be
+- [x] Task: Implement the Cleanup tool using xAI API for text normalization (typo fixing) 00ce8be
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Cleanup Tool (Normalization)' (Protocol in workflow.md)
 
 ## Phase 5: Integration & Batch Processing
