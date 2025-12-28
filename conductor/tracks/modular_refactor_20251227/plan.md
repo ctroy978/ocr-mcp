@@ -24,7 +24,7 @@
 - [x] Task: Implement the Cleanup tool using xAI API for text normalization (typo fixing) 00ce8be
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Cleanup Tool (Normalization)' (Protocol in workflow.md) 656fb73
 
-## Phase 5: Integration & Batch Processing
-- [ ] Task: Implement a coordinator tool to manage the DB-driven pipeline
-- [ ] Task: Test the full pipeline (OCR -> Scrub -> Normalize) with sample data
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: Integration & Batch Processing' (Protocol in workflow.md)
+## Phase 5: Integration & Batch Processing [checkpoint: 2cf215c]
+- [x] Task: Implement a coordinator tool to manage the DB-driven pipeline (Handled by Evaluation Pipeline) 8eeb1a7
+- [x] Task: Test the full pipeline (OCR -> Scrub -> Normalize) with sample data 8eeb1a7
+- [x] Task: Conductor - User Manual Verification 'Phase 5: Integration & Batch Processing' (Protocol in workflow.md) 8eeb1a7
