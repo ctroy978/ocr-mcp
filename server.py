@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, List
@@ -23,6 +24,7 @@ from edmcp.core.name_loader import NameLoader
 from edmcp.tools.scrubber import Scrubber
 from edmcp.core.db import DatabaseManager
 from edmcp.core.job_manager import JobManager
+from edmcp.core.prompts import get_evaluation_prompt
 
 # Load environment variables from .env file
 load_dotenv(find_dotenv())
@@ -387,7 +389,6 @@ def batch_process_documents(
     print(f"[OCR-MCP] Starting Job {job_id}: Found {len(files)} files in {directory_path}", file=sys.stderr)
 
     # Open the output file for writing (JSON Lines) - Backup
-    import json
     with open(output_path, "w", encoding="utf-8") as f_out:
         for file_path in files:
             try:
@@ -427,49 +428,6 @@ def batch_process_documents(
         "job_id": job_id,
         "summary": f"Processed {files_processed} files. Found {students_found} student records. Saved to DB and {output_path}",
         "output_file": str(output_path.absolute()),
-        "errors": errors if errors else None
-    }
-
-def _scrub_processed_job_core(job_id: str) -> dict:
-    """Core logic for scrubbing a job."""
-    print(f"[Scrubber-MCP] Scrubbing Job {job_id}...", file=sys.stderr)
-    
-    # 1. Get essays from DB
-    essays = DB_MANAGER.get_job_essays(job_id)
-    
-    if not essays:
-        return {"status": "warning", "message": f"No essays found for job {job_id}"}
-    
-    scrubbed_count = 0
-    errors = []
-    
-    for essay in essays:
-        try:
-            essay_id = essay['id']
-            raw_text = essay['raw_text']
-            
-            # 2. Scrub
-            if raw_text:
-                scrubbed_text = SCRUBBER.scrub_text(raw_text)
-            else:
-                scrubbed_text = ""
-
-            # 3. Update DB
-            DB_MANAGER.update_essay_scrubbed(essay_id, scrubbed_text)
-            scrubbed_count += 1
-            
-        except Exception as e:
-            error_msg = f"Essay {essay['id']}: {str(e)}"
-            print(f"[Scrubber-MCP] Error scrubbing essay {essay['id']}: {e}", file=sys.stderr)
-            errors.append(error_msg)
-            
-    print(f"[Scrubber-MCP] Job {job_id} Scrubbed. {scrubbed_count}/{len(essays)} essays processed.", file=sys.stderr)
-    
-    return {
-        "status": "success",
-        "job_id": job_id,
-        "scrubbed_count": scrubbed_count,
-        "total_essays": len(essays),
         "errors": errors if errors else None
     }
 
@@ -596,20 +554,105 @@ def _normalize_processed_job_core(job_id: str, model: Optional[str] = None) -> d
         "errors": errors if errors else None
     }
 
+def _evaluate_job_core(job_id: str, rubric: str, context_material: str, model: Optional[str] = None, system_instructions: Optional[str] = None) -> dict:
+    """Core logic for evaluating essays in a job."""
+    print(f"[Evaluation-MCP] Evaluating Job {job_id}...", file=sys.stderr)
+    
+    # Resolve model
+    model = model or os.environ.get("EVALUATION_API_MODEL") or os.environ.get("XAI_API_MODEL") or "grok-beta"
+    
+    # Get client
+    try:
+        client = get_openai_client()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to get AI client: {e}"}
+
+    # 1. Get essays from DB
+    essays = DB_MANAGER.get_job_essays(job_id)
+    
+    if not essays:
+        return {"status": "warning", "message": f"No essays found for job {job_id}"}
+    
+    evaluated_count = 0
+    errors = []
+    
+    for essay in essays:
+        try:
+            essay_id = essay['id']
+            # Selection priority: Normalized -> Scrubbed -> Raw
+            text_to_evaluate = (
+                essay.get('normalized_text') or 
+                essay.get('scrubbed_text') or 
+                essay.get('raw_text')
+            )
+            
+            if not text_to_evaluate:
+                continue
+
+            # 2. Construct Prompt
+            prompt = get_evaluation_prompt(text_to_evaluate, rubric, context_material, system_instructions)
+
+            # 3. Call AI for Evaluation
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a professional academic evaluator. Return your response in strictly valid JSON format."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"} if "grok" not in model.lower() else None # Grok-beta might not support JSON mode yet via OpenAI client, but we asked for it in prompt
+            )
+            eval_json_str = response.choices[0].message.content.strip()
+            
+            # 4. Extract Grade (simple parse)
+            grade = None
+            try:
+                eval_data = json.loads(eval_json_str)
+                grade = str(eval_data.get("score", ""))
+            except json.JSONDecodeError:
+                pass # Fallback to None grade, but keep raw JSON
+            
+            # 5. Update DB
+            DB_MANAGER.update_essay_evaluation(essay_id, eval_json_str, grade)
+            evaluated_count += 1
+            
+        except Exception as e:
+            error_msg = f"Essay {essay['id']}: {str(e)}"
+            print(f"[Evaluation-MCP] Error evaluating essay {essay['id']}: {e}", file=sys.stderr)
+            errors.append(error_msg)
+            
+    print(f"[Evaluation-MCP] Job {job_id} Evaluated. {evaluated_count}/{len(essays)} essays processed.", file=sys.stderr)
+    
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "evaluated_count": evaluated_count,
+        "total_essays": len(essays),
+        "errors": errors if errors else None
+    }
+
 @mcp.tool
-def normalize_processed_job(job_id: str, model: Optional[str] = None) -> dict:
+def evaluate_job(
+    job_id: str, 
+    rubric: str, 
+    context_material: str, 
+    model: Optional[str] = None, 
+    system_instructions: Optional[str] = None
+) -> dict:
     """
-    Normalizes text (fixing OCR typos) for all essays in a processed job using AI.
-    Reads scrubbed text from DB and updates the normalized_text field.
+    Evaluates all essays in a processed job using AI based on a rubric and context material.
+    Updates the database with scores and detailed comments.
     
     Args:
-        job_id: The ID of the job to normalize.
-        model: The AI model to use (default: env XAI_API_MODEL or grok-beta).
+        job_id: The ID of the job to evaluate.
+        rubric: The grading criteria text.
+        context_material: The source material or answer key context.
+        model: The AI model to use (default: env EVALUATION_API_MODEL or grok-beta).
+        system_instructions: Optional custom instructions for the AI evaluator.
         
     Returns:
-        Summary of normalization operation.
+        Summary of evaluation operation.
     """
-    return _normalize_processed_job_core(job_id, model)
+    return _evaluate_job_core(job_id, rubric, context_material, model, system_instructions)
 
 if __name__ == "__main__":
     mcp.run()

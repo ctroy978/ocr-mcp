@@ -58,6 +58,8 @@ class DatabaseManager:
         cursor.execute("PRAGMA table_info(essays)")
         columns = {row[1] for row in cursor.fetchall()}
         
+        if "normalized_text" not in columns:
+            cursor.execute("ALTER TABLE essays ADD COLUMN normalized_text TEXT")
         if "evaluation" not in columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN evaluation TEXT")
         if "grade" not in columns:
