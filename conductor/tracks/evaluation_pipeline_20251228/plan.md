@@ -5,11 +5,11 @@
 - [x] Task: Migrate existing database (add columns if missing) d3375f4
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Database Schema Updates' (Protocol in workflow.md) 2576c58
 
-## Phase 2: Evaluation Tool Implementation
-- [ ] Task: Design the Evaluation Prompt structure (Essay + Rubric + Context)
-- [ ] Task: Write Tests for `evaluate_job` logic (mocking AI)
-- [ ] Task: Implement `evaluate_job` tool in `server.py`
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Evaluation Tool Implementation' (Protocol in workflow.md)
+## Phase 2: Evaluation Tool Implementation [checkpoint: daa0aa9]
+- [x] Task: Design the Evaluation Prompt structure (Essay + Rubric + Context) 09c9b43
+- [x] Task: Write Tests for `evaluate_job` logic (mocking AI) 1cabef6
+- [x] Task: Implement `evaluate_job` tool in `server.py` 1cabef6
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Evaluation Tool Implementation' (Protocol in workflow.md) d388dea
 
 ## Phase 3: Integration & Testing
 - [ ] Task: Create a full end-to-end test script (OCR -> Scrub -> Evaluate)
