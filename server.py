@@ -19,6 +19,9 @@ from pdf2image import convert_from_path
 from openai import OpenAI
 from dotenv import load_dotenv, find_dotenv
 
+from edmcp.core.name_loader import NameLoader
+from edmcp.tools.scrubber import Scrubber
+
 # Load environment variables from .env file
 load_dotenv(find_dotenv())
 
@@ -27,6 +30,12 @@ NAME_HEADER_PATTERN = regex.compile(
     r"(?im)^\s*(?:name|id)\s*[:\-]\s*([\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*)?)"
 )
 CONTINUE_HEADER_PATTERN = regex.compile(r"(?im)^\s*continue\s*[:\-]\s*(.+)$")
+
+# Initialize Scrubber
+NAMES_DIR = Path(__file__).parent / "edmcp/data/names"
+loader = NameLoader(NAMES_DIR)
+all_names = loader.load_all_names()
+SCRUBBER = Scrubber(all_names)
 
 # Initialize the FastMCP server
 mcp = FastMCP("OCR-MCP Server")
@@ -237,8 +246,11 @@ def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None
         name = detect_name(text)
         continuation = detect_continuation_name(text)
         
+        # Scrub PII from text
+        scrubbed_text = SCRUBBER.scrub_text(text)
+
         page_results.append(
-            PageResult(number=i, text=text, detected_name=name, continuation_name=continuation)
+            PageResult(number=i, text=scrubbed_text, detected_name=name, continuation_name=continuation)
         )
         
     # Aggregate results
