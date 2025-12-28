@@ -430,5 +430,62 @@ def batch_process_documents(
         "errors": errors if errors else None
     }
 
+def _scrub_processed_job_core(job_id: str) -> dict:
+    """Core logic for scrubbing a job."""
+    print(f"[Scrubber-MCP] Scrubbing Job {job_id}...", file=sys.stderr)
+    
+    # 1. Get essays from DB
+    essays = DB_MANAGER.get_job_essays(job_id)
+    
+    if not essays:
+        return {"status": "warning", "message": f"No essays found for job {job_id}"}
+    
+    scrubbed_count = 0
+    errors = []
+    
+    for essay in essays:
+        try:
+            essay_id = essay['id']
+            raw_text = essay['raw_text']
+            
+            # 2. Scrub
+            if raw_text:
+                scrubbed_text = SCRUBBER.scrub_text(raw_text)
+            else:
+                scrubbed_text = ""
+
+            # 3. Update DB
+            DB_MANAGER.update_essay_scrubbed(essay_id, scrubbed_text)
+            scrubbed_count += 1
+            
+        except Exception as e:
+            error_msg = f"Essay {essay['id']}: {str(e)}"
+            print(f"[Scrubber-MCP] Error scrubbing essay {essay['id']}: {e}", file=sys.stderr)
+            errors.append(error_msg)
+            
+    print(f"[Scrubber-MCP] Job {job_id} Scrubbed. {scrubbed_count}/{len(essays)} essays processed.", file=sys.stderr)
+    
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "scrubbed_count": scrubbed_count,
+        "total_essays": len(essays),
+        "errors": errors if errors else None
+    }
+
+@mcp.tool
+def scrub_processed_job(job_id: str) -> dict:
+    """
+    Scrubs PII from all essays in a processed job.
+    Reads raw text from DB, scrubs it using the configured Scrubber, and updates the database.
+    
+    Args:
+        job_id: The ID of the job to scrub.
+        
+    Returns:
+        Summary of scrubbing operation.
+    """
+    return _scrub_processed_job_core(job_id)
+
 if __name__ == "__main__":
     mcp.run()
