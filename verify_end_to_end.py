@@ -12,9 +12,9 @@ import server
 def verify_end_to_end():
     print("Verifying End-to-End Pipeline (OCR -> Scrub -> Evaluate)...")
     
-    # 1. Setup Mocks for OCR
-    with patch('server.convert_from_path') as mock_convert, \
-         patch('server.ocr_image_with_qwen') as mock_ocr, \
+    # 1. Setup Mocks for OCR (Mocking dependencies inside the tools)
+    with patch('edmcp.tools.ocr.convert_from_path') as mock_convert, \
+         patch('edmcp.tools.ocr.OCRTool.ocr_image') as mock_ocr, \
          patch('server.get_openai_client') as mock_get_client, \
          patch('os.path.exists') as mock_exists:
         
@@ -29,9 +29,10 @@ def verify_end_to_end():
         
         # Original OCR Text
         raw_ocr_text = "Name: John Doe\nThe Raven is a poem by Edgar Allan Poe."
+        # mock_ocr is now mocking the method on the class instance, so we configure return value directly
         mock_ocr.return_value = raw_ocr_text
         
-        # Mock AI Response for Evaluation
+        # Mock AI Response for Evaluation (server.py uses standard client for this)
         eval_data = {
             "criteria": [
                 {
@@ -62,9 +63,18 @@ def verify_end_to_end():
         os.makedirs(dummy_in_dir, exist_ok=True)
         Path(f"{dummy_in_dir}/test.pdf").touch()
         
+        # We need to ensure OCRTool finds the dummy file when iterating
+        # batch_process_documents glob logic is real, so the file must exist
+        # But convert_from_path is mocked, so it won't actually read it.
+        
         batch_result = server._batch_process_documents_core(dummy_in_dir, backup_dir)
-        job_id = batch_result['job_id']
         print(f"Batch Result: {batch_result}")
+        
+        if batch_result['status'] != 'success' or batch_result['summary'].startswith("Processed 0"):
+             print(f"FAILURE: Batch processing failed or found 0 files. Errors: {batch_result.get('errors')}")
+             sys.exit(1)
+
+        job_id = batch_result['job_id']
         
         # Verify Raw Data in DB
         essays = server.DB_MANAGER.get_job_essays(job_id)

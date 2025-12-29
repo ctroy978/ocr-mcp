@@ -1,5 +1,8 @@
 import pytest
-from edmcp.tools.scrubber import Scrubber
+import json
+from pathlib import Path
+from edmcp.tools.scrubber import Scrubber, ScrubberTool
+from edmcp.core.jsonl_utils import write_jsonl
 
 def test_scrub_text_basic():
     names = {"john", "doe"}
@@ -46,3 +49,63 @@ def test_scrub_text_avoids_partial_matches():
     text = "John and Johnson went to the park."
     expected = "[STUDENT_NAME] and Johnson went to the park."
     assert scrubber.scrub_text(text) == expected
+
+@pytest.fixture
+def temp_job_dir(tmp_path):
+    job_dir = tmp_path / "job_456"
+    job_dir.mkdir()
+    return job_dir
+
+@pytest.fixture
+def temp_names_dir(tmp_path):
+    names_dir = tmp_path / "names"
+    names_dir.mkdir()
+    
+    # Create school_names.csv
+    school_file = names_dir / "school_names.csv"
+    with open(school_file, "w") as f:
+        f.write("first_name,last_name\nJohn,Doe\nJane,Smith\n")
+        
+    return names_dir
+
+def test_scrubber_tool_scrub_job(temp_job_dir, temp_names_dir):
+    """Test that ScrubberTool correctly scrubs a JSONL file in a job directory."""
+    # Create dummy ocr_results.jsonl
+    ocr_results = [
+        {
+            "job_id": "job_456",
+            "student_name": "John Doe",
+            "text": "Name: John Doe\nI like to code.",
+            "metadata": {"source": "test.pdf"}
+        },
+        {
+            "job_id": "job_456",
+            "student_name": "Jane Smith",
+            "text": "Jane Smith reporting.\nSky is blue.",
+            "metadata": {"source": "test.pdf"}
+        }
+    ]
+    input_path = temp_job_dir / "ocr_results.jsonl"
+    write_jsonl(input_path, ocr_results)
+    
+    # Initialize tool
+    tool = ScrubberTool(job_dir=temp_job_dir, names_dir=temp_names_dir)
+    output_path = tool.scrub_job()
+    
+    assert output_path.exists()
+    assert output_path.name == "scrubbed_results.jsonl"
+    
+    # Verify content
+    with open(output_path, "r") as f:
+        lines = f.readlines()
+        assert len(lines) == 2
+        
+        record1 = json.loads(lines[0])
+        assert "John Doe" not in record1["text"]
+        assert "[STUDENT_NAME]" in record1["text"]
+        # Student name field should remain (for re-identification in gradebook)
+        assert record1["student_name"] == "John Doe"
+        
+        record2 = json.loads(lines[1])
+        assert "Jane Smith" not in record2["text"]
+        assert "[STUDENT_NAME]" in record2["text"]

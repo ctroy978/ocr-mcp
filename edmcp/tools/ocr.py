@@ -10,6 +10,7 @@ import regex
 from pdf2image import convert_from_path
 from openai import OpenAI
 from edmcp.core.jsonl_utils import write_jsonl
+from edmcp.core.db import DatabaseManager
 
 # Reuse patterns from original implementation
 NAME_HEADER_PATTERN = regex.compile(
@@ -50,9 +51,10 @@ class TestAggregate:
         }
 
 class OCRTool:
-    def __init__(self, job_dir: Path, job_id: Optional[str] = None):
+    def __init__(self, job_dir: Path, job_id: Optional[str] = None, db_manager: Optional[DatabaseManager] = None):
         self.job_dir = Path(job_dir)
         self.job_id = job_id or self.job_dir.name
+        self.db_manager = db_manager
         self.client = self._get_client()
         self.model = os.environ.get("QWEN_API_MODEL", "qwen-vl-max")
 
@@ -119,8 +121,20 @@ class OCRTool:
         aggregates = self._aggregate_pages(page_results, unknown_prefix)
         records = [agg.to_dict(str(pdf_path), self.job_id) for agg in aggregates]
         
+        # Write to JSONL (Backup/Handoff)
         output_path = self.job_dir / "ocr_results.jsonl"
         write_jsonl(output_path, records, append=True)
+        
+        # Write to DB if manager is present
+        if self.db_manager:
+            for record in records:
+                self.db_manager.add_essay(
+                    job_id=self.job_id,
+                    student_name=record['student_name'],
+                    raw_text=record['text'],
+                    metadata=record['metadata']
+                )
+
         return output_path
 
     def _aggregate_pages(self, pages: List[PageResult], unknown_prefix: str) -> List[TestAggregate]:
