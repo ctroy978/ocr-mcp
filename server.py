@@ -377,7 +377,7 @@ from datetime import datetime
 
 def _batch_process_documents_core(
     directory_path: str,
-    output_directory: str,
+    output_directory: Optional[str] = None,
     model: Optional[str] = None,
     dpi: int = 220
 ) -> dict:
@@ -390,12 +390,16 @@ def _batch_process_documents_core(
     job_id = JOB_MANAGER.create_job()
     job_dir = JOB_MANAGER.get_job_directory(job_id)
     
-    # Also support legacy output_directory for JSONL backup (if different from job dir)
-    out_dir = Path(output_directory)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Note: OCRTool writes to ocr_results.jsonl inside the job_dir
-    # We will copy it to output_directory at the end if needed, or just let the user know.
+    # Internal output file (always created by OCRTool)
+    internal_jsonl = job_dir / "ocr_results.jsonl"
     
+    # Handle external backup if requested
+    external_jsonl = None
+    if output_directory:
+        out_dir = Path(output_directory)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        external_jsonl = out_dir / f"{job_id}.jsonl"
+
     files_processed = 0
     errors = []
 
@@ -426,14 +430,13 @@ def _batch_process_documents_core(
             print(f"[OCR-MCP] Error processing {file_path.name}: {e}", file=sys.stderr)
             errors.append(error_msg)
 
-    # Create a legacy backup link if requested (copying the internal JSONL to the output dir)
-    internal_jsonl = job_dir / "ocr_results.jsonl"
-    external_jsonl = out_dir / f"{job_id}.jsonl"
-    
-    if internal_jsonl.exists():
+    # Copy to external backup if requested
+    final_output_path = internal_jsonl
+    if external_jsonl and internal_jsonl.exists():
         try:
             import shutil
             shutil.copy2(internal_jsonl, external_jsonl)
+            final_output_path = external_jsonl
         except Exception as e:
             print(f"Warning: Failed to copy backup JSONL: {e}", file=sys.stderr)
 
@@ -446,26 +449,26 @@ def _batch_process_documents_core(
     return {
         "status": "success",
         "job_id": job_id,
-        "summary": f"Processed {files_processed} files. Found {students_found} student records. Saved to DB and {external_jsonl}",
-        "output_file": str(external_jsonl.absolute()),
+        "summary": f"Processed {files_processed} files. Found {students_found} student records.",
+        "output_file": str(final_output_path.absolute()),
         "errors": errors if errors else None
     }
 
 @mcp.tool
 def batch_process_documents(
     directory_path: str,
-    output_directory: str,
+    output_directory: Optional[str] = None,
     model: Optional[str] = None,
     dpi: int = 220
 ) -> dict:
     """
     Process all PDF documents in a directory.
-    Saves raw results to SQLite database and legacy JSONL backup.
+    Saves raw results to SQLite database.
     Returns a Job ID and summary to the agent.
 
     Args:
         directory_path: Directory containing PDF files to process
-        output_directory: Directory where the unique JSONL output will be stored (Legacy/Backup)
+        output_directory: Optional. Directory to save a backup JSONL file (legacy).
         model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
         dpi: DPI for scanning
 
