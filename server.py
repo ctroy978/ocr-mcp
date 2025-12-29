@@ -377,7 +377,6 @@ from datetime import datetime
 
 def _batch_process_documents_core(
     directory_path: str,
-    output_directory: Optional[str] = None,
     model: Optional[str] = None,
     dpi: int = 220
 ) -> dict:
@@ -393,13 +392,6 @@ def _batch_process_documents_core(
     # Internal output file (always created by OCRTool)
     internal_jsonl = job_dir / "ocr_results.jsonl"
     
-    # Handle external backup if requested
-    external_jsonl = None
-    if output_directory:
-        out_dir = Path(output_directory)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        external_jsonl = out_dir / f"{job_id}.jsonl"
-
     files_processed = 0
     errors = []
 
@@ -430,16 +422,6 @@ def _batch_process_documents_core(
             print(f"[OCR-MCP] Error processing {file_path.name}: {e}", file=sys.stderr)
             errors.append(error_msg)
 
-    # Copy to external backup if requested
-    final_output_path = internal_jsonl
-    if external_jsonl and internal_jsonl.exists():
-        try:
-            import shutil
-            shutil.copy2(internal_jsonl, external_jsonl)
-            final_output_path = external_jsonl
-        except Exception as e:
-            print(f"Warning: Failed to copy backup JSONL: {e}", file=sys.stderr)
-
     # Get student count from DB
     essays = DB_MANAGER.get_job_essays(job_id)
     students_found = len(essays)
@@ -449,33 +431,31 @@ def _batch_process_documents_core(
     return {
         "status": "success",
         "job_id": job_id,
-        "summary": f"Processed {files_processed} files. Found {students_found} student records.",
-        "output_file": str(final_output_path.absolute()),
+        "summary": f"Processed {files_processed} files. Found {students_found} student records. Job artifacts stored in {job_dir}",
+        "output_file": str(internal_jsonl.absolute()),
         "errors": errors if errors else None
     }
 
 @mcp.tool
 def batch_process_documents(
     directory_path: str,
-    output_directory: Optional[str] = None,
     model: Optional[str] = None,
     dpi: int = 220
 ) -> dict:
     """
     Process all PDF documents in a directory.
-    Saves raw results to SQLite database.
+    Saves raw results to the internal database and job directory.
     Returns a Job ID and summary to the agent.
 
     Args:
         directory_path: Directory containing PDF files to process
-        output_directory: Optional. Directory to save a backup JSONL file (legacy).
         model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
         dpi: DPI for scanning
 
     Returns:
         Summary containing Job ID, counts, and the location of the output file.
     """
-    return _batch_process_documents_core(directory_path, output_directory, model, dpi)
+    return _batch_process_documents_core(directory_path, model, dpi)
 
 def _scrub_processed_job_core(job_id: str) -> dict:
     """Core logic for scrubbing a job."""

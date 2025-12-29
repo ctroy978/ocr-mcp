@@ -67,7 +67,7 @@ def verify_end_to_end():
         # batch_process_documents glob logic is real, so the file must exist
         # But convert_from_path is mocked, so it won't actually read it.
         
-        batch_result = server._batch_process_documents_core(dummy_in_dir, backup_dir)
+        batch_result = server._batch_process_documents_core(dummy_in_dir)
         print(f"Batch Result: {batch_result}")
         
         if batch_result['status'] != 'success' or batch_result['summary'].startswith("Processed 0"):
