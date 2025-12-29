@@ -33,6 +33,8 @@ This server follows a modular "Heavy Lifter" pattern to manage high-volume data 
 - **`normalize_processed_job`**: (Optional) Uses AI to fix OCR artifacts and typos. Designed for human-in-the-loop verification or agent-triggered cleanup.
 - **`process_pdf_document`**: A lightweight tool for single-file processing and immediate feedback.
 - **`evaluate_job`**: Grades student essays based on a provided rubric and context material.
+- **`search_past_jobs`**: Discover past grading jobs by student name, job name, or essay content keywords.
+- **`export_job_archive`**: Generates a ZIP archive of a job (Evidence + Reports) for offline storage or disputes.
 - **`add_to_knowledge_base`**: Ingests reference materials (textbooks, rubrics) into a local vector store.
 - **`query_knowledge_base`**: Retrieves relevant context chunks for a specific topic/query.
 
@@ -47,6 +49,22 @@ This pipeline prioritizes user control over "black box" automation.
     *   *Verify:* Did we find 15 students as expected?
     *   *Check:* Are any essays suspiciously long (implying a merge error) or short?
 3.  **Proceed:** Once validated, the user triggers `scrub_processed_job` to sanitize the data before it is sent to any external evaluation model.
+
+---
+
+## Archive & Legal Discovery
+
+To support grade disputes and legal proceedings, the system provides powerful search and export tools.
+
+1.  **Discovery:** Use `search_past_jobs(query="...")` to find old jobs. You can search by:
+    *   **Content:** Keywords inside the student's essay (e.g., "Launcelot").
+    *   **Metadata:** Student Name or Job Name.
+    *   **Date:** Filter by date ranges.
+2.  **Export:** Call `export_job_archive(job_id)` to generate a downloadable ZIP file containing:
+    *   **Evidence:** The raw OCR text (JSONL).
+    *   **Reports:** The CSV Gradebook.
+    *   **Feedback:** Individual student PDFs.
+    *   **Chain of Custody:** A manifest log of the job's processing history.
 
 ---
 

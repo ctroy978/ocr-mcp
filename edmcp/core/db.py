@@ -26,7 +26,8 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'PENDING'
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                name TEXT
             )
         """)
         
@@ -56,18 +57,25 @@ class DatabaseManager:
         
         # Check for columns in essays
         cursor.execute("PRAGMA table_info(essays)")
-        columns = {row[1] for row in cursor.fetchall()}
+        essays_columns = {row[1] for row in cursor.fetchall()}
         
-        if "normalized_text" not in columns:
+        if "normalized_text" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN normalized_text TEXT")
-        if "evaluation" not in columns:
+        if "evaluation" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN evaluation TEXT")
-        if "grade" not in columns:
+        if "grade" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN grade TEXT")
+            
+        # Check for columns in jobs
+        cursor.execute("PRAGMA table_info(jobs)")
+        jobs_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "name" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN name TEXT")
             
         self.conn.commit()
 
-    def create_job(self) -> str:
+    def create_job(self, job_name: Optional[str] = None) -> str:
         """Creates a new job and returns its ID."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_suffix = str(uuid.uuid4())[:8]
@@ -77,8 +85,8 @@ class DatabaseManager:
         
         cursor = self.conn.cursor()
         cursor.execute(
-            "INSERT INTO jobs (id, created_at) VALUES (?, ?)",
-            (job_id, created_at)
+            "INSERT INTO jobs (id, created_at, name) VALUES (?, ?, ?)",
+            (job_id, created_at, job_name)
         )
         self.conn.commit()
         return job_id
@@ -185,6 +193,77 @@ class DatabaseManager:
         rows = cursor.fetchall()
         
         return [row['id'] for row in rows]
+
+    def search_jobs(self, query: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Searches for jobs matching a keyword in student names or content.
+        """
+        sql = """
+            SELECT DISTINCT 
+                j.id, j.created_at, j.name, j.status,
+                e.student_name, e.raw_text
+            FROM jobs j
+            JOIN essays e ON j.id = e.job_id
+            WHERE (
+                e.student_name LIKE ? OR 
+                e.raw_text LIKE ? OR
+                j.name LIKE ?
+            )
+        """
+        params = [f"%{query}%", f"%{query}%", f"%{query}%"]
+        
+        if start_date:
+            sql += " AND j.created_at >= ?"
+            params.append(start_date)
+        if end_date:
+            sql += " AND j.created_at <= ?"
+            params.append(end_date)
+            
+        sql += " ORDER BY j.created_at DESC"
+        
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        
+        # Aggregate results by job to avoid duplicates
+        jobs = {}
+        for row in rows:
+            job_id = row['id']
+            if job_id not in jobs:
+                jobs[job_id] = {
+                    "id": job_id,
+                    "created_at": row['created_at'],
+                    "name": row['name'],
+                    "status": row['status'],
+                    "matches": []
+                }
+            
+            # Add snippet match info
+            snippet = ""
+            reason = ""
+            if query.lower() in (row['student_name'] or "").lower():
+                reason = "Student Name Match"
+                snippet = row['student_name']
+            elif query.lower() in (row['name'] or "").lower():
+                reason = "Job Name Match"
+                snippet = row['name']
+            else:
+                reason = "Content Match"
+                # Find the snippet
+                text = row['raw_text'] or ""
+                idx = text.lower().find(query.lower())
+                start = max(0, idx - 30)
+                end = min(len(text), idx + len(query) + 30)
+                snippet = "..." + text[start:end] + "..."
+            
+            # Only add limited matches to keep payload small
+            if len(jobs[job_id]['matches']) < 3:
+                jobs[job_id]['matches'].append({
+                    "reason": reason,
+                    "snippet": snippet
+                })
+                
+        return list(jobs.values())
 
     def close(self):
         """Closes the database connection."""

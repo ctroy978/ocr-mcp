@@ -24,6 +24,7 @@ from edmcp.core.name_loader import NameLoader
 from edmcp.tools.scrubber import Scrubber, ScrubberTool
 from edmcp.tools.ocr import OCRTool
 from edmcp.tools.cleanup import CleanupTool
+from edmcp.tools.archive import ArchiveTool
 from edmcp.core.db import DatabaseManager
 from edmcp.core.job_manager import JobManager
 from edmcp.core.prompts import get_evaluation_prompt
@@ -59,6 +60,9 @@ REPORT_GENERATOR = ReportGenerator("data/reports")
 
 # Initialize Cleanup Tool
 CLEANUP_TOOL = CleanupTool(DB_MANAGER, KB_MANAGER, JOB_MANAGER)
+
+# Initialize Archive Tool
+ARCHIVE_TOOL = ArchiveTool(DB_MANAGER, JOB_MANAGER, REPORT_GENERATOR)
 
 # Initialize the FastMCP server
 mcp = FastMCP("OCR-MCP Server")
@@ -382,7 +386,8 @@ from datetime import datetime
 def _batch_process_documents_core(
     directory_path: str,
     model: Optional[str] = None,
-    dpi: int = 220
+    dpi: int = 220,
+    job_name: Optional[str] = None
 ) -> dict:
     """Core logic for batch processing documents."""
     input_path = Path(directory_path)
@@ -390,7 +395,7 @@ def _batch_process_documents_core(
         return {"status": "error", "message": f"Directory not found: {directory_path}"}
 
     # Generate a unique Job ID via JobManager (creates DB record and directory)
-    job_id = JOB_MANAGER.create_job()
+    job_id = JOB_MANAGER.create_job(job_name=job_name)
     job_dir = JOB_MANAGER.get_job_directory(job_id)
     
     # Internal output file (always created by OCRTool)
@@ -435,6 +440,7 @@ def _batch_process_documents_core(
     return {
         "status": "success",
         "job_id": job_id,
+        "job_name": job_name,
         "summary": f"Processed {files_processed} files. Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
         "output_file": str(internal_jsonl.absolute()),
         "errors": errors if errors else None
@@ -444,7 +450,8 @@ def _batch_process_documents_core(
 def batch_process_documents(
     directory_path: str,
     model: Optional[str] = None,
-    dpi: int = 220
+    dpi: int = 220,
+    job_name: Optional[str] = None
 ) -> dict:
     """
     Process all PDF documents in a directory.
@@ -455,11 +462,12 @@ def batch_process_documents(
         directory_path: Directory containing PDF files to process
         model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
         dpi: DPI for scanning
+        job_name: Optional name/title for the job (e.g., "Fall 2025 Midterm").
 
     Returns:
         Summary containing Job ID, counts, and the location of the output file.
     """
-    return _batch_process_documents_core(directory_path, model, dpi)
+    return _batch_process_documents_core(directory_path, model, dpi, job_name)
 
 def _get_job_statistics_core(job_id: str) -> dict:
     """Core logic for generating job statistics."""
@@ -865,6 +873,36 @@ def delete_knowledge_topic(topic: str) -> dict:
         Status of the operation.
     """
     return CLEANUP_TOOL.delete_knowledge_topic(topic)
+
+@mcp.tool
+def search_past_jobs(query: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> dict:
+    """
+    Searches for past jobs by keyword (student name, job name, or essay content).
+    Useful for retrieving jobs when the exact ID is lost.
+    
+    Args:
+        query: The search keyword.
+        start_date: Optional start date (YYYY-MM-DD).
+        end_date: Optional end date (YYYY-MM-DD).
+        
+    Returns:
+        List of matching jobs with metadata and context snippets.
+    """
+    return ARCHIVE_TOOL.search_past_jobs(query, start_date, end_date)
+
+@mcp.tool
+def export_job_archive(job_id: str) -> dict:
+    """
+    Exports a comprehensive ZIP archive of a job for legal/dispute purposes.
+    Includes raw data, gradebook, individual PDFs, and a chain-of-custody manifest.
+    
+    Args:
+        job_id: The ID of the job to export.
+        
+    Returns:
+        Path to the generated ZIP file.
+    """
+    return ARCHIVE_TOOL.export_job_archive(job_id)
 
 if __name__ == "__main__":
     mcp.run()

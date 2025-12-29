@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 from edmcp.core.db import DatabaseManager
 
 class JobManager:
@@ -11,7 +11,7 @@ class JobManager:
         self.base_path = Path(base_path)
         self.db = db
 
-    def create_job(self) -> str:
+    def create_job(self, job_name: Optional[str] = None) -> str:
         """
         Creates a new job:
         1. Creates a record in the database.
@@ -20,7 +20,7 @@ class JobManager:
         Returns:
             str: The Job ID.
         """
-        job_id = self.db.create_job()
+        job_id = self.db.create_job(job_name)
         job_dir = self.base_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         return job_id
