@@ -431,7 +431,7 @@ def _batch_process_documents_core(
     return {
         "status": "success",
         "job_id": job_id,
-        "summary": f"Processed {files_processed} files. Found {students_found} student records. Job artifacts stored in {job_dir}",
+        "summary": f"Processed {files_processed} files. Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
         "output_file": str(internal_jsonl.absolute()),
         "errors": errors if errors else None
     }
@@ -456,6 +456,47 @@ def batch_process_documents(
         Summary containing Job ID, counts, and the location of the output file.
     """
     return _batch_process_documents_core(directory_path, model, dpi)
+
+def _get_job_statistics_core(job_id: str) -> dict:
+    """Core logic for generating job statistics."""
+    essays = DB_MANAGER.get_job_essays(job_id)
+    if not essays:
+        return {"status": "warning", "message": f"No essays found for job {job_id}"}
+        
+    manifest = []
+    for essay in essays:
+        raw_text = essay.get('raw_text', "")
+        word_count = len(raw_text.split()) if raw_text else 0
+        metadata = essay.get('metadata', {})
+        page_count = metadata.get('page_count', "N/A")
+        
+        manifest.append({
+            "essay_id": essay['id'],
+            "student_name": essay['student_name'],
+            "page_count": page_count,
+            "word_count": word_count
+        })
+        
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "total_students": len(essays),
+        "manifest": manifest
+    }
+
+@mcp.tool
+def get_job_statistics(job_id: str) -> dict:
+    """
+    Returns a manifest of the job's essays for inspection.
+    Useful for verifying that page aggregation worked correctly before scrubbing.
+    
+    Args:
+        job_id: The ID of the job to inspect.
+        
+    Returns:
+        Dictionary containing a list of students, page counts, and word counts.
+    """
+    return _get_job_statistics_core(job_id)
 
 def _scrub_processed_job_core(job_id: str) -> dict:
     """Core logic for scrubbing a job."""
