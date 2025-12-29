@@ -23,6 +23,7 @@ from dotenv import load_dotenv, find_dotenv
 from edmcp.core.name_loader import NameLoader
 from edmcp.tools.scrubber import Scrubber, ScrubberTool
 from edmcp.tools.ocr import OCRTool
+from edmcp.tools.cleanup import CleanupTool
 from edmcp.core.db import DatabaseManager
 from edmcp.core.job_manager import JobManager
 from edmcp.core.prompts import get_evaluation_prompt
@@ -55,6 +56,9 @@ DB_MANAGER = DatabaseManager(DB_PATH)
 JOB_MANAGER = JobManager(JOBS_DIR, DB_MANAGER)
 KB_MANAGER = KnowledgeBaseManager("data/vector_store")
 REPORT_GENERATOR = ReportGenerator("data/reports")
+
+# Initialize Cleanup Tool
+CLEANUP_TOOL = CleanupTool(DB_MANAGER, KB_MANAGER, JOB_MANAGER)
 
 # Initialize the FastMCP server
 mcp = FastMCP("OCR-MCP Server")
@@ -832,6 +836,35 @@ def generate_student_feedback(job_id: str) -> dict:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@mcp.tool
+def cleanup_old_jobs(retention_days: int = 210, dry_run: bool = False) -> dict:
+    """
+    Deletes jobs older than the specified retention period (default: 210 days / 7 months).
+    Removes both the database records and the physical files.
+    
+    Args:
+        retention_days: Number of days to keep jobs.
+        dry_run: If True, lists what would be deleted without taking action.
+        
+    Returns:
+        Summary of deleted jobs.
+    """
+    return CLEANUP_TOOL.cleanup_old_jobs(retention_days, dry_run)
+
+@mcp.tool
+def delete_knowledge_topic(topic: str) -> dict:
+    """
+    Manually deletes a Knowledge Base topic (collection).
+    Use this to remove obsolete reference materials.
+    
+    Args:
+        topic: The name of the topic to delete.
+        
+    Returns:
+        Status of the operation.
+    """
+    return CLEANUP_TOOL.delete_knowledge_topic(topic)
 
 if __name__ == "__main__":
     mcp.run()

@@ -154,6 +154,38 @@ class DatabaseManager:
             results.append(item)
         return results
 
+    def delete_job(self, job_id: str) -> bool:
+        """
+        Deletes a job and all its associated essays from the database.
+        Returns True if the job existed and was deleted, False otherwise.
+        """
+        cursor = self.conn.cursor()
+        
+        # Check if job exists
+        cursor.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,))
+        if not cursor.fetchone():
+            return False
+            
+        # Delete essays (manual cascade since foreign_keys pragma might be off)
+        cursor.execute("DELETE FROM essays WHERE job_id = ?", (job_id,))
+        
+        # Delete job
+        cursor.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        self.conn.commit()
+        return True
+
+    def get_old_jobs(self, cutoff_date: datetime) -> List[str]:
+        """
+        Retrieves IDs of jobs created before the cutoff_date.
+        """
+        cutoff_iso = cutoff_date.isoformat()
+        cursor = self.conn.cursor()
+        
+        cursor.execute("SELECT id FROM jobs WHERE created_at < ?", (cutoff_iso,))
+        rows = cursor.fetchall()
+        
+        return [row['id'] for row in rows]
+
     def close(self):
         """Closes the database connection."""
         self.conn.close()
