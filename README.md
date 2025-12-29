@@ -50,6 +50,25 @@ This pipeline prioritizes user control over "black box" automation.
 
 ---
 
+## Data Lifecycle & Maintenance
+
+To ensure compliance and manage disk space, the system includes tools for data purging.
+
+### Retention Policy
+*   **Student Data (Jobs):** Retained for **7 months (210 days)**. This covers a standard academic semester plus the subsequent grade dispute period.
+*   **Knowledge Base (Topics):** Retained indefinitely until manually deleted.
+
+### Maintenance Workflow
+This server does not run background cron jobs. Maintenance is **Agent-Driven**.
+
+**Recommended Schedule:** Run weekly (e.g., Sunday nights).
+1.  **Agent Instruction:** "Run system maintenance."
+2.  **Tool Call:** `cleanup_old_jobs(retention_days=210)`
+    *   This deletes the database records and physical files for all expired jobs.
+3.  **Manual Cleanup:** To remove obsolete textbooks or rubrics, use `delete_knowledge_topic(topic="Old_Curriculum")`.
+
+---
+
 ## RAG & Evaluation Workflow
 
 This system supports **Retrieval-Augmented Generation (RAG)** to provide "Just-in-Time" context for grading essays.
