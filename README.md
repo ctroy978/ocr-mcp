@@ -28,9 +28,50 @@ This server follows a modular "Heavy Lifter" pattern to manage high-volume data 
 ## Modular Toolset
 
 - **`batch_process_documents`**: The entry point. Converts PDFs to images, performs OCR via Qwen-VL, and saves **raw text** to the database.
+- **`get_job_statistics`**: Returns a manifest (student names, page counts, word counts) for a job. Critical for verifying correct page aggregation before scrubbing.
 - **`scrub_processed_job`**: Automatically redacts student names and PII using pre-defined CSV name lists.
 - **`normalize_processed_job`**: (Optional) Uses AI to fix OCR artifacts and typos. Designed for human-in-the-loop verification or agent-triggered cleanup.
 - **`process_pdf_document`**: A lightweight tool for single-file processing and immediate feedback.
+- **`evaluate_job`**: Grades student essays based on a provided rubric and context material.
+- **`add_to_knowledge_base`**: Ingests reference materials (textbooks, rubrics) into a local vector store.
+- **`query_knowledge_base`**: Retrieves relevant context chunks for a specific topic/query.
+
+---
+
+## Human-in-the-Loop Inspection
+
+This pipeline prioritizes user control over "black box" automation.
+
+1.  **OCR & Pause:** `batch_process_documents` runs the heavy OCR workload but **does not** automatically proceed to scrubbing. It returns a summary status.
+2.  **Inspection (Optional but Recommended):** The Agent (or User) can call `get_job_statistics(job_id)` to view a manifest of the results.
+    *   *Verify:* Did we find 15 students as expected?
+    *   *Check:* Are any essays suspiciously long (implying a merge error) or short?
+3.  **Proceed:** Once validated, the user triggers `scrub_processed_job` to sanitize the data before it is sent to any external evaluation model.
+
+---
+
+## RAG & Evaluation Workflow
+
+This system supports **Retrieval-Augmented Generation (RAG)** to provide "Just-in-Time" context for grading essays.
+
+### The "Agent Bridge" Pattern
+Unlike monolithic tools, we decouple **Retrieval** from **Evaluation**. The AI Agent acts as the intelligent bridge between these two steps.
+
+#### Note for Agent Design (LangGraph / Orchestrator)
+**How does the Agent know what to query?**
+The Agent must derive the search query dynamically from the instructor's instructions or the rubric itself.
+
+**Recommended Workflow:**
+1.  **Analyze Request:** The Agent receives a prompt: *"Grade these essays on Frost using the 'Poetry 101' textbook."*
+2.  **Formulate Query:** The Agent extracts the key subject matter.
+    *   *Self-Correction:* If the prompt is vague (e.g., "Grade this"), the Agent should ask the user for context or a rubric.
+    *   *Extraction:* "Search for 'Frost themes', 'Mending Wall analysis', 'Road Not Taken summary'."
+3.  **Retrieve Context:** Call `query_knowledge_base(query="Frost themes...", topic="Poetry 101")`.
+4.  **Inject Context:** Pass the *retrieved text* into the `context_material` argument of the `evaluate_job` tool.
+
+**Why this separation?**
+*   **Flexibility:** The Agent can query the knowledge base multiple times or refine its search before grading.
+*   **Transparency:** The User can see exactly what "facts" the Agent retrieved before they are used for grading.
 
 ---
 
