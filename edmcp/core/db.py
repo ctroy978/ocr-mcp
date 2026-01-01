@@ -5,12 +5,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union
 
+
 class DatabaseManager:
     """
     Manages the SQLite database for the OCR-MCP pipeline.
     Handles storage of jobs, essays, and their states.
     """
-    
+
     def __init__(self, db_path: Union[str, Path] = "edmcp.db"):
         self.db_path = str(db_path)
         self.conn = sqlite3.connect(self.db_path)
@@ -20,7 +21,7 @@ class DatabaseManager:
     def _create_tables(self):
         """Creates the necessary tables if they don't exist."""
         cursor = self.conn.cursor()
-        
+
         # Jobs Table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
@@ -30,7 +31,7 @@ class DatabaseManager:
                 name TEXT
             )
         """)
-        
+
         # Essays Table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS essays (
@@ -47,32 +48,32 @@ class DatabaseManager:
                 FOREIGN KEY (job_id) REFERENCES jobs (id)
             )
         """)
-        
+
         self.conn.commit()
         self._migrate_schema()
 
     def _migrate_schema(self):
         """Adds missing columns to existing tables."""
         cursor = self.conn.cursor()
-        
+
         # Check for columns in essays
         cursor.execute("PRAGMA table_info(essays)")
         essays_columns = {row[1] for row in cursor.fetchall()}
-        
+
         if "normalized_text" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN normalized_text TEXT")
         if "evaluation" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN evaluation TEXT")
         if "grade" not in essays_columns:
             cursor.execute("ALTER TABLE essays ADD COLUMN grade TEXT")
-            
+
         # Check for columns in jobs
         cursor.execute("PRAGMA table_info(jobs)")
         jobs_columns = {row[1] for row in cursor.fetchall()}
-        
+
         if "name" not in jobs_columns:
             cursor.execute("ALTER TABLE jobs ADD COLUMN name TEXT")
-            
+
         self.conn.commit()
 
     def create_job(self, job_name: Optional[str] = None) -> str:
@@ -80,31 +81,40 @@ class DatabaseManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_suffix = str(uuid.uuid4())[:8]
         job_id = f"job_{timestamp}_{unique_suffix}"
-        
+
         created_at = datetime.now().isoformat()
-        
+
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO jobs (id, created_at, name) VALUES (?, ?, ?)",
-            (job_id, created_at, job_name)
+            (job_id, created_at, job_name),
         )
         self.conn.commit()
         return job_id
 
-    def add_essay(self, job_id: str, student_name: Optional[str], raw_text: str, metadata: Dict[str, Any] = None) -> int:
+    def add_essay(
+        self,
+        job_id: str,
+        student_name: Optional[str],
+        raw_text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
         """Adds a new essay record to a job."""
         metadata_json = json.dumps(metadata) if metadata else None
-        
+
         cursor = self.conn.cursor()
         cursor.execute(
             """
             INSERT INTO essays (job_id, student_name, raw_text, metadata)
             VALUES (?, ?, ?, ?)
             """,
-            (job_id, student_name, raw_text, metadata_json)
+            (job_id, student_name, raw_text, metadata_json),
         )
         self.conn.commit()
-        return cursor.lastrowid
+        # lastrowid is guaranteed to be int for successful INSERT with AUTOINCREMENT
+        essay_id = cursor.lastrowid
+        assert essay_id is not None, "Failed to get essay ID after insert"
+        return essay_id
 
     def update_essay_scrubbed(self, essay_id: int, scrubbed_text: str):
         """Updates an essay with scrubbed text and sets status to SCRUBBED."""
@@ -115,7 +125,7 @@ class DatabaseManager:
             SET scrubbed_text = ?, status = 'SCRUBBED' 
             WHERE id = ?
             """,
-            (scrubbed_text, essay_id)
+            (scrubbed_text, essay_id),
         )
         self.conn.commit()
 
@@ -128,11 +138,13 @@ class DatabaseManager:
             SET normalized_text = ?, status = 'NORMALIZED' 
             WHERE id = ?
             """,
-            (normalized_text, essay_id)
+            (normalized_text, essay_id),
         )
         self.conn.commit()
 
-    def update_essay_evaluation(self, essay_id: int, evaluation_json: str, grade: Optional[str] = None):
+    def update_essay_evaluation(
+        self, essay_id: int, evaluation_json: str, grade: Optional[str] = None
+    ):
         """Updates an essay with evaluation results and sets status to GRADED."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -141,7 +153,7 @@ class DatabaseManager:
             SET evaluation = ?, grade = ?, status = 'GRADED' 
             WHERE id = ?
             """,
-            (evaluation_json, grade, essay_id)
+            (evaluation_json, grade, essay_id),
         )
         self.conn.commit()
 
@@ -150,13 +162,13 @@ class DatabaseManager:
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM essays WHERE job_id = ?", (job_id,))
         rows = cursor.fetchall()
-        
+
         results = []
         for row in rows:
             item = dict(row)
-            if item['metadata']:
+            if item["metadata"]:
                 try:
-                    item['metadata'] = json.loads(item['metadata'])
+                    item["metadata"] = json.loads(item["metadata"])
                 except json.JSONDecodeError:
                     pass
             results.append(item)
@@ -168,15 +180,15 @@ class DatabaseManager:
         Returns True if the job existed and was deleted, False otherwise.
         """
         cursor = self.conn.cursor()
-        
+
         # Check if job exists
         cursor.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,))
         if not cursor.fetchone():
             return False
-            
+
         # Delete essays (manual cascade since foreign_keys pragma might be off)
         cursor.execute("DELETE FROM essays WHERE job_id = ?", (job_id,))
-        
+
         # Delete job
         cursor.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
         self.conn.commit()
@@ -188,13 +200,18 @@ class DatabaseManager:
         """
         cutoff_iso = cutoff_date.isoformat()
         cursor = self.conn.cursor()
-        
+
         cursor.execute("SELECT id FROM jobs WHERE created_at < ?", (cutoff_iso,))
         rows = cursor.fetchall()
-        
-        return [row['id'] for row in rows]
 
-    def search_jobs(self, query: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        return [row["id"] for row in rows]
+
+    def search_jobs(
+        self,
+        query: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Searches for jobs matching a keyword in student names or content.
         """
@@ -211,58 +228,55 @@ class DatabaseManager:
             )
         """
         params = [f"%{query}%", f"%{query}%", f"%{query}%"]
-        
+
         if start_date:
             sql += " AND j.created_at >= ?"
             params.append(start_date)
         if end_date:
             sql += " AND j.created_at <= ?"
             params.append(end_date)
-            
+
         sql += " ORDER BY j.created_at DESC"
-        
+
         cursor = self.conn.cursor()
         cursor.execute(sql, params)
         rows = cursor.fetchall()
-        
+
         # Aggregate results by job to avoid duplicates
         jobs = {}
         for row in rows:
-            job_id = row['id']
+            job_id = row["id"]
             if job_id not in jobs:
                 jobs[job_id] = {
                     "id": job_id,
-                    "created_at": row['created_at'],
-                    "name": row['name'],
-                    "status": row['status'],
-                    "matches": []
+                    "created_at": row["created_at"],
+                    "name": row["name"],
+                    "status": row["status"],
+                    "matches": [],
                 }
-            
+
             # Add snippet match info
             snippet = ""
             reason = ""
-            if query.lower() in (row['student_name'] or "").lower():
+            if query.lower() in (row["student_name"] or "").lower():
                 reason = "Student Name Match"
-                snippet = row['student_name']
-            elif query.lower() in (row['name'] or "").lower():
+                snippet = row["student_name"]
+            elif query.lower() in (row["name"] or "").lower():
                 reason = "Job Name Match"
-                snippet = row['name']
+                snippet = row["name"]
             else:
                 reason = "Content Match"
                 # Find the snippet
-                text = row['raw_text'] or ""
+                text = row["raw_text"] or ""
                 idx = text.lower().find(query.lower())
                 start = max(0, idx - 30)
                 end = min(len(text), idx + len(query) + 30)
                 snippet = "..." + text[start:end] + "..."
-            
+
             # Only add limited matches to keep payload small
-            if len(jobs[job_id]['matches']) < 3:
-                jobs[job_id]['matches'].append({
-                    "reason": reason,
-                    "snippet": snippet
-                })
-                
+            if len(jobs[job_id]["matches"]) < 3:
+                jobs[job_id]["matches"].append({"reason": reason, "snippet": snippet})
+
         return list(jobs.values())
 
     def close(self):

@@ -18,6 +18,7 @@ import chromadb
 from openai import APITimeoutError, APIConnectionError, RateLimitError, InternalServerError
 
 from edmcp.core.utils import retry_with_backoff
+from edmcp.tools.ocr import OCRTool
 
 # Define common AI exceptions for retries
 AI_RETRIABLE_EXCEPTIONS = (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
@@ -129,9 +130,36 @@ class KnowledgeBaseManager:
             
         print(f"[RAG] Loading {len(expanded_paths)} files into topic '{topic}'...", file=sys.stderr)
         
-        # Use input_files which expects a list of file paths
-        reader = SimpleDirectoryReader(input_files=expanded_paths)
-        documents = reader.load_data()
+        documents = []
+        pdf_paths = [p for p in expanded_paths if p.lower().endswith(".pdf")]
+        other_paths = [p for p in expanded_paths if not p.lower().endswith(".pdf")]
+        
+        # 1. Process PDFs with OCRTool (Robust for scanned docs)
+        if pdf_paths:
+            print(f"[RAG] Processing {len(pdf_paths)} PDF(s) with OCR...", file=sys.stderr)
+            try:
+                ocr_tool = OCRTool() # No job context needed for generic ingestion
+                for pdf_path in pdf_paths:
+                    try:
+                        text = ocr_tool.extract_text_from_pdf(pdf_path)
+                        if text.strip():
+                            doc = Document(text=text, metadata={"file_path": pdf_path, "filename": Path(pdf_path).name})
+                            documents.append(doc)
+                        else:
+                            print(f"[RAG] Warning: No text extracted from {pdf_path}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[RAG] Error OCRing {pdf_path}: {e}", file=sys.stderr)
+            except Exception as e:
+                 print(f"[RAG] Failed to initialize OCRTool: {e}", file=sys.stderr)
+
+        # 2. Process other files with SimpleDirectoryReader
+        if other_paths:
+            try:
+                reader = SimpleDirectoryReader(input_files=other_paths)
+                other_docs = reader.load_data()
+                documents.extend(other_docs)
+            except Exception as e:
+                print(f"[RAG] Error loading non-PDF files: {e}", file=sys.stderr)
         
         if not documents:
             print(f"[RAG] No content extracted from files.", file=sys.stderr)

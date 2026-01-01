@@ -17,7 +17,13 @@ from typing import Iterable, Optional, List, Any
 import regex
 from fastmcp import FastMCP
 from pdf2image import convert_from_path
-from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError, InternalServerError
+from openai import (
+    OpenAI,
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+)
 from dotenv import load_dotenv, find_dotenv
 
 from edmcp.core.name_loader import NameLoader
@@ -25,6 +31,7 @@ from edmcp.tools.scrubber import Scrubber, ScrubberTool
 from edmcp.tools.ocr import OCRTool
 from edmcp.tools.cleanup import CleanupTool
 from edmcp.tools.archive import ArchiveTool
+from edmcp.tools.converter import DocumentConverter
 from edmcp.core.db import DatabaseManager
 from edmcp.core.job_manager import JobManager
 from edmcp.core.prompts import get_evaluation_prompt
@@ -33,7 +40,12 @@ from edmcp.core.report_generator import ReportGenerator
 from edmcp.core.utils import retry_with_backoff, extract_json_from_text
 
 # Define common AI exceptions for retries
-AI_RETRIABLE_EXCEPTIONS = (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
+AI_RETRIABLE_EXCEPTIONS = (
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+)
 
 # Load environment variables from .env file
 load_dotenv(find_dotenv())
@@ -64,8 +76,12 @@ CLEANUP_TOOL = CleanupTool(DB_MANAGER, KB_MANAGER, JOB_MANAGER)
 # Initialize Archive Tool
 ARCHIVE_TOOL = ArchiveTool(DB_MANAGER, JOB_MANAGER, REPORT_GENERATOR)
 
+# Initialize Document Converter
+CONVERTER = DocumentConverter()
+
 # Initialize the FastMCP server
 mcp = FastMCP("OCR-MCP Server")
+
 
 @dataclass
 class PageResult:
@@ -73,6 +89,7 @@ class PageResult:
     text: str
     detected_name: Optional[str]
     continuation_name: Optional[str]
+
 
 @dataclass
 class TestAggregate:
@@ -100,6 +117,7 @@ class TestAggregate:
             },
         }
 
+
 def detect_name(text: str) -> Optional[str]:
     """Detect student name in the top portion of the OCR text."""
     # Limit search to the first ~10 lines to reduce false positives deeper in the page.
@@ -109,6 +127,7 @@ def detect_name(text: str) -> Optional[str]:
         return match.group(1).strip()
     return None
 
+
 def detect_continuation_name(text: str) -> Optional[str]:
     """Detect CONTINUE markers that reference the original student name."""
     top_section = "\n".join(text.splitlines()[:10])
@@ -117,7 +136,10 @@ def detect_continuation_name(text: str) -> Optional[str]:
         return match.group(1).strip()
     return None
 
-def aggregate_tests(pages: Iterable[PageResult], *, unknown_prefix: str = "Unknown Student") -> list[TestAggregate]:
+
+def aggregate_tests(
+    pages: Iterable[PageResult], *, unknown_prefix: str = "Unknown Student"
+) -> list[TestAggregate]:
     aggregates: list[TestAggregate] = []
     current: Optional[TestAggregate] = None
     unknown_counter = 0
@@ -142,7 +164,9 @@ def aggregate_tests(pages: Iterable[PageResult], *, unknown_prefix: str = "Unkno
     for page in pages:
         if page.continuation_name:
             continuation_key = normalize_name(page.continuation_name)
-            target = aggregates_by_name.get(continuation_key) if continuation_key else None
+            target = (
+                aggregates_by_name.get(continuation_key) if continuation_key else None
+            )
             if target is not None:
                 target.append_page(page.text, page.number)
             else:
@@ -205,17 +229,20 @@ def aggregate_tests(pages: Iterable[PageResult], *, unknown_prefix: str = "Unkno
         aggregates.append(aggregate)
     return aggregates
 
-def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = None) -> OpenAI:
+
+def get_openai_client(
+    api_key: Optional[str] = None, base_url: Optional[str] = None
+) -> OpenAI:
     """
     Creates an OpenAI-compatible client.
     Priority: Provided args -> Environment variables -> Default Base URLs.
     """
     api_key = api_key or os.environ.get("OPENAI_API_KEY")
-    
+
     if not api_key:
         # Fallback for OCR specifically if OPENAI_API_KEY not set
         api_key = os.environ.get("QWEN_API_KEY")
-        
+
     if not api_key:
         raise ValueError("API Key is required. Please check your .env file.")
 
@@ -225,24 +252,30 @@ def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = N
             base_url = "https://openrouter.ai/api/v1"
         elif "dashscope" in (os.environ.get("QWEN_BASE_URL") or ""):
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        
+
     return OpenAI(api_key=api_key, base_url=base_url)
 
+
 @retry_with_backoff(retries=3, exceptions=AI_RETRIABLE_EXCEPTIONS)
-def _call_chat_completion(client: OpenAI, model: str, messages: List[dict], **kwargs) -> Any:
+def _call_chat_completion(
+    client: OpenAI, model: str, messages: List[Any], **kwargs: Any
+) -> Any:
     """Helper to call OpenAI chat completions with retry logic."""
     return client.chat.completions.create(
         model=model,
         messages=messages,
-        **kwargs
+        **kwargs,  # type: ignore[arg-type]
     )
 
+
 @retry_with_backoff(retries=3, exceptions=AI_RETRIABLE_EXCEPTIONS)
-def ocr_image_with_qwen(client: OpenAI, image_bytes: bytes, model: Optional[str] = None) -> str:
+def ocr_image_with_qwen(
+    client: OpenAI, image_bytes: bytes, model: Optional[str] = None
+) -> str:
     # Resolve model: Argument -> Env Var -> Default
     model = model or os.environ.get("QWEN_API_MODEL") or "qwen-vl-max"
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
-    
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -250,7 +283,10 @@ def ocr_image_with_qwen(client: OpenAI, image_bytes: bytes, model: Optional[str]
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Extract all text from this document image. Return only the text found in the image. Do not add any introductory or concluding remarks."},
+                        {
+                            "type": "text",
+                            "text": "Extract all text from this document image. Return only the text found in the image. Do not add any introductory or concluding remarks.",
+                        },
                         {
                             "type": "image_url",
                             "image_url": {
@@ -265,63 +301,75 @@ def ocr_image_with_qwen(client: OpenAI, image_bytes: bytes, model: Optional[str]
     except Exception as e:
         raise RuntimeError(f"Qwen OCR failed: {str(e)}")
 
-def _process_pdf_core(pdf_path: str, dpi: int = 220, model: Optional[str] = None, unknown_label: str = "Unknown Student", scrub: bool = True) -> dict:
+
+def _process_pdf_core(
+    pdf_path: str,
+    dpi: int = 220,
+    model: Optional[str] = None,
+    unknown_label: str = "Unknown Student",
+    scrub: bool = True,
+) -> dict:
     """Core logic to process a PDF and return raw results."""
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
     # Use OCR-specific configuration
     client = get_openai_client(
-        api_key=os.environ.get("QWEN_API_KEY"),
-        base_url=os.environ.get("QWEN_BASE_URL")
+        api_key=os.environ.get("QWEN_API_KEY"), base_url=os.environ.get("QWEN_BASE_URL")
     )
-    
+
     # Convert PDF to images
     images = convert_from_path(pdf_path, dpi=dpi)
-    
+
     page_results = []
-    
+
     for i, image in enumerate(images, 1):
         # Convert to bytes
         buffered = io.BytesIO()
         image.convert("RGB").save(buffered, format="JPEG", quality=85)
         image_bytes = buffered.getvalue()
-        
+
         # OCR with Qwen
         text = ocr_image_with_qwen(client, image_bytes, model=model)
-        
+
         # Detect names
         name = detect_name(text)
         continuation = detect_continuation_name(text)
-        
+
         # Scrub PII from text if requested
         final_text = text
         if scrub:
             final_text = SCRUBBER.scrub_text(text)
 
         page_results.append(
-            PageResult(number=i, text=final_text, detected_name=name, continuation_name=continuation)
+            PageResult(
+                number=i,
+                text=final_text,
+                detected_name=name,
+                continuation_name=continuation,
+            )
         )
-        
+
     # Aggregate results
     aggregates = aggregate_tests(page_results, unknown_prefix=unknown_label)
-    
+
     results_json = [agg.to_json_record(pdf_path) for agg in aggregates]
-    
+
     return {
         "status": "success",
         "file": pdf_path,
         "total_pages": len(images),
         "students_found": len(aggregates),
-        "results": results_json
+        "results": results_json,
     }
+
 
 @mcp.tool
 def process_pdf_document(
-    pdf_path: str, 
-    dpi: int = 220, 
+    pdf_path: str,
+    dpi: int = 220,
     model: Optional[str] = None,
-    unknown_label: str = "Unknown Student"
+    unknown_label: str = "Unknown Student",
 ) -> dict:
     """
     Process a single PDF document and return the full results in the response.
@@ -341,11 +389,9 @@ def process_pdf_document(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
 @mcp.tool
-def extract_text_from_image(
-    image_path: str, 
-    model: Optional[str] = None
-) -> dict:
+def extract_text_from_image(image_path: str, model: Optional[str] = None) -> dict:
     """
     Extract text from a single image file using Qwen AI OCR.
 
@@ -363,31 +409,29 @@ def extract_text_from_image(
         # Use OCR-specific configuration
         client = get_openai_client(
             api_key=os.environ.get("QWEN_API_KEY"),
-            base_url=os.environ.get("QWEN_BASE_URL")
+            base_url=os.environ.get("QWEN_BASE_URL"),
         )
-        
+
         with open(image_path, "rb") as f:
             image_bytes = f.read()
-            
+
         text = ocr_image_with_qwen(client, image_bytes, model=model)
-        
-        return {
-            "status": "success",
-            "extracted_text": text,
-            "source": image_path
-        }
+
+        return {"status": "success", "extracted_text": text, "source": image_path}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
 
 import sys
 import uuid
 from datetime import datetime
 
+
 def _batch_process_documents_core(
     directory_path: str,
     model: Optional[str] = None,
     dpi: int = 220,
-    job_name: Optional[str] = None
+    job_name: Optional[str] = None,
 ) -> dict:
     """Core logic for batch processing documents."""
     input_path = Path(directory_path)
@@ -397,23 +441,26 @@ def _batch_process_documents_core(
     # Generate a unique Job ID via JobManager (creates DB record and directory)
     job_id = JOB_MANAGER.create_job(job_name=job_name)
     job_dir = JOB_MANAGER.get_job_directory(job_id)
-    
+
     # Internal output file (always created by OCRTool)
     internal_jsonl = job_dir / "ocr_results.jsonl"
-    
+
     files_processed = 0
     errors = []
 
     # Find all PDF files (case-insensitive extension)
     files = sorted(list(input_path.glob("*.[pP][dD][fF]")))
-    
+
     if not files:
         return {
-            "status": "warning", 
-            "message": f"No PDF files found in {directory_path}. Checked for extensions: .pdf, .PDF, .Pdf, etc."
+            "status": "warning",
+            "message": f"No PDF files found in {directory_path}. Checked for extensions: .pdf, .PDF, .Pdf, etc.",
         }
 
-    print(f"[OCR-MCP] Starting Job {job_id}: Found {len(files)} files in {directory_path}", file=sys.stderr)
+    print(
+        f"[OCR-MCP] Starting Job {job_id}: Found {len(files)} files in {directory_path}",
+        file=sys.stderr,
+    )
 
     # Initialize OCR Tool
     ocr_tool = OCRTool(job_dir=job_dir, job_id=job_id, db_manager=DB_MANAGER)
@@ -421,11 +468,11 @@ def _batch_process_documents_core(
     for file_path in files:
         try:
             print(f"[OCR-MCP] Processing {file_path.name}...", file=sys.stderr)
-            
+
             # Use OCR Tool to process file (Handles DB + JSONL)
             ocr_tool.process_pdf(file_path, dpi=dpi)
             files_processed += 1
-            
+
         except Exception as e:
             error_msg = f"{file_path.name}: {str(e)}"
             print(f"[OCR-MCP] Error processing {file_path.name}: {e}", file=sys.stderr)
@@ -435,7 +482,10 @@ def _batch_process_documents_core(
     essays = DB_MANAGER.get_job_essays(job_id)
     students_found = len(essays)
 
-    print(f"[OCR-MCP] Job {job_id} Completed. {files_processed}/{len(files)} files processed.", file=sys.stderr)
+    print(
+        f"[OCR-MCP] Job {job_id} Completed. {files_processed}/{len(files)} files processed.",
+        file=sys.stderr,
+    )
 
     return {
         "status": "success",
@@ -443,15 +493,16 @@ def _batch_process_documents_core(
         "job_name": job_name,
         "summary": f"Processed {files_processed} files. Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
         "output_file": str(internal_jsonl.absolute()),
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
     }
+
 
 @mcp.tool
 def batch_process_documents(
     directory_path: str,
     model: Optional[str] = None,
     dpi: int = 220,
-    job_name: Optional[str] = None
+    job_name: Optional[str] = None,
 ) -> dict:
     """
     Process all PDF documents in a directory.
@@ -469,281 +520,335 @@ def batch_process_documents(
     """
     return _batch_process_documents_core(directory_path, model, dpi, job_name)
 
+
 def _get_job_statistics_core(job_id: str) -> dict:
     """Core logic for generating job statistics."""
     essays = DB_MANAGER.get_job_essays(job_id)
     if not essays:
         return {"status": "warning", "message": f"No essays found for job {job_id}"}
-        
+
     manifest = []
     for essay in essays:
-        raw_text = essay.get('raw_text', "")
+        raw_text = essay.get("raw_text", "")
         word_count = len(raw_text.split()) if raw_text else 0
-        metadata = essay.get('metadata', {})
-        page_count = metadata.get('page_count', "N/A")
-        
-        manifest.append({
-            "essay_id": essay['id'],
-            "student_name": essay['student_name'],
-            "page_count": page_count,
-            "word_count": word_count
-        })
-        
+        metadata = essay.get("metadata", {})
+        page_count = metadata.get("page_count", "N/A")
+
+        manifest.append(
+            {
+                "essay_id": essay["id"],
+                "student_name": essay["student_name"],
+                "page_count": page_count,
+                "word_count": word_count,
+            }
+        )
+
     return {
         "status": "success",
         "job_id": job_id,
         "total_students": len(essays),
-        "manifest": manifest
+        "manifest": manifest,
     }
+
 
 @mcp.tool
 def get_job_statistics(job_id: str) -> dict:
     """
     Returns a manifest of the job's essays for inspection.
     Useful for verifying that page aggregation worked correctly before scrubbing.
-    
+
     Args:
         job_id: The ID of the job to inspect.
-        
+
     Returns:
         Dictionary containing a list of students, page counts, and word counts.
     """
     return _get_job_statistics_core(job_id)
 
+
 def _scrub_processed_job_core(job_id: str) -> dict:
     """Core logic for scrubbing a job."""
     print(f"[Scrubber-MCP] Scrubbing Job {job_id}...", file=sys.stderr)
-    
+
     try:
         job_dir = JOB_MANAGER.get_job_directory(job_id)
-        
+
         # Initialize ScrubberTool with DB Manager
-        scrubber_tool = ScrubberTool(job_dir=job_dir, names_dir=NAMES_DIR, db_manager=DB_MANAGER)
-        
+        scrubber_tool = ScrubberTool(
+            job_dir=job_dir, names_dir=NAMES_DIR, db_manager=DB_MANAGER
+        )
+
         # Run scrubbing (Handles DB update + JSONL creation)
         output_path = scrubber_tool.scrub_job()
-        
+
         # Get stats from DB
         essays = DB_MANAGER.get_job_essays(job_id)
-        scrubbed_count = len([e for e in essays if e['status'] == 'SCRUBBED'])
-        
-        print(f"[Scrubber-MCP] Job {job_id} Scrubbed. {scrubbed_count} essays processed.", file=sys.stderr)
-        
+        scrubbed_count = len([e for e in essays if e["status"] == "SCRUBBED"])
+
+        print(
+            f"[Scrubber-MCP] Job {job_id} Scrubbed. {scrubbed_count} essays processed.",
+            file=sys.stderr,
+        )
+
         return {
             "status": "success",
             "job_id": job_id,
             "scrubbed_count": scrubbed_count,
             "total_essays": len(essays),
-            "output_file": str(output_path)
+            "output_file": str(output_path),
         }
-        
+
     except Exception as e:
         print(f"[Scrubber-MCP] Error scrubbing job {job_id}: {e}", file=sys.stderr)
         return {"status": "error", "message": str(e)}
+
 
 @mcp.tool
 def scrub_processed_job(job_id: str) -> dict:
     """
     Scrubs PII from all essays in a processed job.
     Reads raw text from DB, scrubs it using the configured Scrubber, and updates the database.
-    
+
     Args:
         job_id: The ID of the job to scrub.
-        
+
     Returns:
         Summary of scrubbing operation.
     """
     return _scrub_processed_job_core(job_id)
 
+
 def _normalize_processed_job_core(job_id: str, model: Optional[str] = None) -> dict:
     """Core logic for normalizing text in a job using xAI."""
     print(f"[Cleanup-MCP] Normalizing Job {job_id}...", file=sys.stderr)
-    
+
     # Resolve model: Argument -> Env Var -> Default
-    model = model or os.environ.get("CLEANING_API_MODEL") or os.environ.get("XAI_API_MODEL") or "grok-beta"
-    
+    model = (
+        model
+        or os.environ.get("CLEANING_API_MODEL")
+        or os.environ.get("XAI_API_MODEL")
+        or "grok-beta"
+    )
+
     # Get client
     try:
         client = get_openai_client(
             api_key=os.environ.get("CLEANING_API_KEY") or os.environ.get("XAI_API_KEY"),
-            base_url=os.environ.get("CLEANING_BASE_URL") or os.environ.get("XAI_BASE_URL")
+            base_url=os.environ.get("CLEANING_BASE_URL")
+            or os.environ.get("XAI_BASE_URL"),
         )
     except Exception as e:
         return {"status": "error", "message": f"Failed to get AI client: {e}"}
 
     # 1. Get essays from DB
     essays = DB_MANAGER.get_job_essays(job_id)
-    
+
     if not essays:
         return {"status": "warning", "message": f"No essays found for job {job_id}"}
-    
+
     normalized_count = 0
     errors = []
-    
+
     for essay in essays:
         try:
-            essay_id = essay['id']
+            essay_id = essay["id"]
             # Prioritize scrubbed text for normalization
-            text_to_normalize = essay['scrubbed_text'] or essay['raw_text']
-            
+            text_to_normalize = essay["scrubbed_text"] or essay["raw_text"]
+
             if not text_to_normalize:
                 continue
 
             # 2. Call AI for Normalization
             messages = [
                 {
-                    "role": "system", 
-                    "content": "You are a text normalization assistant. Your task is to fix OCR errors, typos, and minor grammatical issues while preserving the original meaning and tone of the student's essay. Do not add comments or change the structure significantly. Return ONLY the normalized text."
+                    "role": "system",
+                    "content": "You are a text normalization assistant. Your task is to fix OCR errors, typos, and minor grammatical issues while preserving the original meaning and tone of the student's essay. Do not add comments or change the structure significantly. Return ONLY the normalized text.",
                 },
                 {
                     "role": "user",
-                    "content": f"Normalize the following text:\n\n{text_to_normalize}"
-                }
+                    "content": f"Normalize the following text:\n\n{text_to_normalize}",
+                },
             ]
             response = _call_chat_completion(client, model, messages)
             normalized_text = response.choices[0].message.content.strip()
-            
+
             # 3. Update DB
             DB_MANAGER.update_essay_normalized(essay_id, normalized_text)
             normalized_count += 1
-            
+
         except Exception as e:
             error_msg = f"Essay {essay['id']}: {str(e)}"
-            print(f"[Cleanup-MCP] Error normalizing essay {essay['id']}: {e}", file=sys.stderr)
+            print(
+                f"[Cleanup-MCP] Error normalizing essay {essay['id']}: {e}",
+                file=sys.stderr,
+            )
             errors.append(error_msg)
-            
-    print(f"[Cleanup-MCP] Job {job_id} Normalized. {normalized_count}/{len(essays)} essays processed.", file=sys.stderr)
-    
+
+    print(
+        f"[Cleanup-MCP] Job {job_id} Normalized. {normalized_count}/{len(essays)} essays processed.",
+        file=sys.stderr,
+    )
+
     return {
         "status": "success",
         "job_id": job_id,
         "normalized_count": normalized_count,
         "total_essays": len(essays),
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
     }
 
-def _evaluate_job_core(job_id: str, rubric: str, context_material: str, model: Optional[str] = None, system_instructions: Optional[str] = None) -> dict:
+
+def _evaluate_job_core(
+    job_id: str,
+    rubric: str,
+    context_material: str,
+    model: Optional[str] = None,
+    system_instructions: Optional[str] = None,
+) -> dict:
     """Core logic for evaluating essays in a job."""
     print(f"[Evaluation-MCP] Evaluating Job {job_id}...", file=sys.stderr)
-    
+
     # Resolve model
-    model = model or os.environ.get("EVALUATION_API_MODEL") or os.environ.get("XAI_API_MODEL") or "grok-beta"
-    
+    model = (
+        model
+        or os.environ.get("EVALUATION_API_MODEL")
+        or os.environ.get("XAI_API_MODEL")
+        or "grok-beta"
+    )
+
     # Get client
     try:
         client = get_openai_client(
-            api_key=os.environ.get("EVALUATION_API_KEY") or os.environ.get("XAI_API_KEY"),
-            base_url=os.environ.get("EVALUATION_BASE_URL") or os.environ.get("XAI_BASE_URL")
+            api_key=os.environ.get("EVALUATION_API_KEY")
+            or os.environ.get("XAI_API_KEY"),
+            base_url=os.environ.get("EVALUATION_BASE_URL")
+            or os.environ.get("XAI_BASE_URL"),
         )
     except Exception as e:
         return {"status": "error", "message": f"Failed to get AI client: {e}"}
 
     # 1. Get essays from DB
     essays = DB_MANAGER.get_job_essays(job_id)
-    
+
     if not essays:
         return {"status": "warning", "message": f"No essays found for job {job_id}"}
-    
+
     evaluated_count = 0
     errors = []
-    
+
     for essay in essays:
         try:
-            essay_id = essay['id']
+            essay_id = essay["id"]
             # Selection priority: Normalized -> Scrubbed -> Raw
             text_to_evaluate = (
-                essay.get('normalized_text') or 
-                essay.get('scrubbed_text') or 
-                essay.get('raw_text')
+                essay.get("normalized_text")
+                or essay.get("scrubbed_text")
+                or essay.get("raw_text")
             )
-            
+
             if not text_to_evaluate:
                 continue
 
             # 2. Construct Prompt
-            prompt = get_evaluation_prompt(text_to_evaluate, rubric, context_material, system_instructions)
+            prompt = get_evaluation_prompt(
+                text_to_evaluate, rubric, context_material, system_instructions
+            )
 
             # 3. Call AI for Evaluation
             messages = [
-                {"role": "system", "content": "You are a professional academic evaluator. Return your response in strictly valid JSON format."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a professional academic evaluator. Return your response in strictly valid JSON format.",
+                },
+                {"role": "user", "content": prompt},
             ]
-            
+
             # Grok-beta/Grok-3 might not support JSON mode yet via OpenAI client, but we asked for it in prompt
-            response_format = {"type": "json_object"} if "grok" not in model.lower() else None
-            
+            response_format = (
+                {"type": "json_object"} if "grok" not in model.lower() else None
+            )
+
             response = _call_chat_completion(
-                client, 
-                model, 
-                messages, 
-                response_format=response_format
+                client, model, messages, response_format=response_format
             )
             raw_eval_text = response.choices[0].message.content.strip()
-            
+
             # 4. Extract and Validate JSON
             eval_data = extract_json_from_text(raw_eval_text)
             if not eval_data:
-                raise ValueError(f"Failed to extract valid JSON from AI response: {raw_eval_text[:100]}...")
-            
+                raise ValueError(
+                    f"Failed to extract valid JSON from AI response: {raw_eval_text[:100]}..."
+                )
+
             # Ensure we save the cleaned JSON back to string for DB
             eval_json_str = json.dumps(eval_data)
-            
+
             # 5. Extract Grade
             grade = str(eval_data.get("overall_score") or eval_data.get("score") or "")
-            
+
             # 6. Update DB
             DB_MANAGER.update_essay_evaluation(essay_id, eval_json_str, grade)
             evaluated_count += 1
-            
+
         except Exception as e:
             error_msg = f"Essay {essay['id']}: {str(e)}"
-            print(f"[Evaluation-MCP] Error evaluating essay {essay['id']}: {e}", file=sys.stderr)
+            print(
+                f"[Evaluation-MCP] Error evaluating essay {essay['id']}: {e}",
+                file=sys.stderr,
+            )
             errors.append(error_msg)
-            
-    print(f"[Evaluation-MCP] Job {job_id} Evaluated. {evaluated_count}/{len(essays)} essays processed.", file=sys.stderr)
-    
+
+    print(
+        f"[Evaluation-MCP] Job {job_id} Evaluated. {evaluated_count}/{len(essays)} essays processed.",
+        file=sys.stderr,
+    )
+
     return {
         "status": "success",
         "job_id": job_id,
         "evaluated_count": evaluated_count,
         "total_essays": len(essays),
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
     }
+
 
 @mcp.tool
 def evaluate_job(
-    job_id: str, 
-    rubric: str, 
-    context_material: str, 
-    model: Optional[str] = None, 
-    system_instructions: Optional[str] = None
+    job_id: str,
+    rubric: str,
+    context_material: str,
+    model: Optional[str] = None,
+    system_instructions: Optional[str] = None,
 ) -> dict:
     """
     Evaluates all essays in a processed job using AI based on a rubric and context material.
     Updates the database with scores and detailed comments.
-    
+
     Args:
         job_id: The ID of the job to evaluate.
         rubric: The grading criteria text.
         context_material: The source material or answer key context.
         model: The AI model to use (default: env EVALUATION_API_MODEL or grok-beta).
         system_instructions: Optional custom instructions for the AI evaluator.
-        
+
     Returns:
         Summary of evaluation operation.
     """
-    return _evaluate_job_core(job_id, rubric, context_material, model, system_instructions)
+    return _evaluate_job_core(
+        job_id, rubric, context_material, model, system_instructions
+    )
+
 
 @mcp.tool
 def add_to_knowledge_base(file_paths: List[str], topic: str) -> dict:
     """
     Adds local files (PDF, TXT, etc.) to the knowledge base for a specific topic.
     The content will be indexed and available for later retrieval.
-    
+
     Args:
         file_paths: List of absolute or relative paths to files.
         topic: A name for the collection (e.g., 'frost_poetry', 'thermodynamics').
-        
+
     Returns:
         Summary of ingestion.
     """
@@ -753,49 +858,49 @@ def add_to_knowledge_base(file_paths: List[str], topic: str) -> dict:
             "status": "success",
             "topic": topic,
             "documents_added": count,
-            "message": f"Successfully indexed {count} documents into topic '{topic}'."
+            "message": f"Successfully indexed {count} documents into topic '{topic}'.",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 @mcp.tool
-def query_knowledge_base(query: str, topic: str, include_raw_context: bool = False) -> dict:
+def query_knowledge_base(
+    query: str, topic: str, include_raw_context: bool = False
+) -> dict:
     """
     Queries the knowledge base for information about a specific topic.
     Returns a synthesized answer and optionally raw context chunks.
-    
+
     Args:
         query: The question or search term.
         topic: The topic collection to search in.
         include_raw_context: If true, returns the raw text chunks used for the answer.
-        
+
     Returns:
         Synthesized answer and optional context.
     """
     try:
         answer = KB_MANAGER.query_knowledge(query, topic)
-        result = {
-            "status": "success",
-            "topic": topic,
-            "answer": answer
-        }
-        
+        result: dict[str, Any] = {"status": "success", "topic": topic, "answer": answer}
+
         if include_raw_context:
             chunks = KB_MANAGER.retrieve_context_chunks(query, topic)
             result["context_chunks"] = chunks
-            
+
         return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 @mcp.tool
 def generate_gradebook(job_id: str) -> dict:
     """
     Generates a CSV gradebook for a job, reuniting student names with their scores.
-    
+
     Args:
         job_id: The ID of the job to report on.
-        
+
     Returns:
         Summary with the path to the CSV file.
     """
@@ -803,25 +908,26 @@ def generate_gradebook(job_id: str) -> dict:
         essays = DB_MANAGER.get_job_essays(job_id)
         if not essays:
             return {"status": "error", "message": f"No essays found for job {job_id}"}
-            
+
         csv_path = REPORT_GENERATOR.generate_csv_gradebook(job_id, essays)
         return {
             "status": "success",
             "job_id": job_id,
             "csv_path": csv_path,
-            "message": f"Gradebook generated at {csv_path}"
+            "message": f"Gradebook generated at {csv_path}",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 @mcp.tool
 def generate_student_feedback(job_id: str) -> dict:
     """
     Generates individual PDF feedback reports for each student in a job.
-    
+
     Args:
         job_id: The ID of the job to report on.
-        
+
     Returns:
         Summary with the path to the directory containing PDFs.
     """
@@ -829,81 +935,262 @@ def generate_student_feedback(job_id: str) -> dict:
         essays = DB_MANAGER.get_job_essays(job_id)
         if not essays:
             return {"status": "error", "message": f"No essays found for job {job_id}"}
-            
+
         pdf_dir = REPORT_GENERATOR.generate_student_feedback_pdfs(job_id, essays)
-        
+
         # Zip the directory for easy download
         zip_path = REPORT_GENERATOR.zip_directory(pdf_dir, f"{job_id}_student_feedback")
-        
+
         return {
             "status": "success",
             "job_id": job_id,
             "pdf_directory": pdf_dir,
             "zip_path": zip_path,
-            "message": f"Individual feedback PDFs generated and zipped at {zip_path}"
+            "message": f"Individual feedback PDFs generated and zipped at {zip_path}",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 @mcp.tool
 def cleanup_old_jobs(retention_days: int = 210, dry_run: bool = False) -> dict:
     """
     Deletes jobs older than the specified retention period (default: 210 days / 7 months).
     Removes both the database records and the physical files.
-    
+
     Args:
         retention_days: Number of days to keep jobs.
         dry_run: If True, lists what would be deleted without taking action.
-        
+
     Returns:
         Summary of deleted jobs.
     """
     return CLEANUP_TOOL.cleanup_old_jobs(retention_days, dry_run)
+
 
 @mcp.tool
 def delete_knowledge_topic(topic: str) -> dict:
     """
     Manually deletes a Knowledge Base topic (collection).
     Use this to remove obsolete reference materials.
-    
+
     Args:
         topic: The name of the topic to delete.
-        
+
     Returns:
         Status of the operation.
     """
     return CLEANUP_TOOL.delete_knowledge_topic(topic)
 
+
 @mcp.tool
-def search_past_jobs(query: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> dict:
+def search_past_jobs(
+    query: str, start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> dict:
     """
     Searches for past jobs by keyword (student name, job name, or essay content).
     Useful for retrieving jobs when the exact ID is lost.
-    
+
     Args:
         query: The search keyword.
         start_date: Optional start date (YYYY-MM-DD).
         end_date: Optional end date (YYYY-MM-DD).
-        
+
     Returns:
         List of matching jobs with metadata and context snippets.
     """
     return ARCHIVE_TOOL.search_past_jobs(query, start_date, end_date)
+
 
 @mcp.tool
 def export_job_archive(job_id: str) -> dict:
     """
     Exports a comprehensive ZIP archive of a job for legal/dispute purposes.
     Includes raw data, gradebook, individual PDFs, and a chain-of-custody manifest.
-    
+
     Args:
         job_id: The ID of the job to export.
-        
+
     Returns:
         Path to the generated ZIP file.
     """
     return ARCHIVE_TOOL.export_job_archive(job_id)
 
+
+@mcp.tool
+def convert_word_to_pdf(file_path: str, output_dir: Optional[str] = None) -> dict:
+    """
+    Converts a Word document (DOC/DOCX) to PDF format.
+    Use this before batch processing if teachers submit essays as Word documents.
+
+    Args:
+        file_path: Path to the Word document (.doc or .docx)
+        output_dir: Optional directory to save the PDF (defaults to same directory as input)
+
+    Returns:
+        Dictionary with status and path to the converted PDF file.
+    """
+    try:
+        pdf_path = CONVERTER.convert_word_to_pdf(file_path, output_dir)
+        return {
+            "status": "success",
+            "input_file": file_path,
+            "output_file": str(pdf_path),
+            "message": f"Successfully converted to PDF: {pdf_path}",
+        }
+    except Exception as e:
+        return {"status": "error", "input_file": file_path, "error": str(e)}
+
+
+@mcp.tool
+def convert_pdf_to_text(
+    file_path: str, output_path: Optional[str] = None, use_ocr: bool = False
+) -> dict:
+    """
+    Converts a PDF to plain text format.
+    Use this for rubrics or reference materials that teachers provide as PDFs.
+
+    Args:
+        file_path: Path to the PDF file
+        output_path: Optional path for output text file (defaults to same name with .txt extension)
+        use_ocr: If True, uses OCR for scanned PDFs (slower but works with images)
+
+    Returns:
+        Dictionary with status and path to the text file.
+    """
+    try:
+        txt_path = CONVERTER.convert_pdf_to_text(file_path, output_path, use_ocr)
+        return {
+            "status": "success",
+            "input_file": file_path,
+            "output_file": str(txt_path),
+            "message": f"Successfully converted to text: {txt_path}",
+            "used_ocr": use_ocr,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "input_file": file_path,
+            "error": str(e),
+            "suggestion": "If the PDF is scanned/image-based, try setting use_ocr=True",
+        }
+
+
+@mcp.tool
+def batch_convert_word_to_pdf(input_dir: str, output_dir: str) -> dict:
+    """
+    Converts all Word documents in a directory to PDF format.
+    Use this to prepare a batch of Word essays before running batch_process_documents.
+
+    Args:
+        input_dir: Directory containing Word documents (.doc, .docx)
+        output_dir: Directory to save the converted PDF files
+
+    Returns:
+        Dictionary with conversion summary and list of converted files.
+    """
+    try:
+        pdf_paths = CONVERTER.batch_convert_to_pdf(input_dir, output_dir)
+        return {
+            "status": "success",
+            "input_directory": input_dir,
+            "output_directory": output_dir,
+            "files_converted": len(pdf_paths),
+            "converted_files": [str(p) for p in pdf_paths],
+            "message": f"Successfully converted {len(pdf_paths)} Word documents to PDF.",
+        }
+    except Exception as e:
+        return {"status": "error", "input_directory": input_dir, "error": str(e)}
+
+
+@mcp.tool
+def check_conversion_capabilities() -> dict:
+    """
+    Checks which document conversion tools are available on the system.
+    Returns installation instructions if tools are missing.
+
+    Returns:
+        Dictionary with capability status and installation instructions.
+    """
+    return CONVERTER.get_conversion_info()
+
+
+@mcp.tool
+def convert_image_to_pdf(file_path: str, output_path: Optional[str] = None) -> dict:
+    """
+    Converts a single image file (JPEG, PNG, etc.) to PDF format.
+
+    Args:
+        file_path: Path to the image file (.jpg, .jpeg, .png, etc.)
+        output_path: Optional path for output PDF (defaults to same name with .pdf extension)
+
+    Returns:
+        Dictionary with status and path to the converted PDF file.
+    """
+    try:
+        pdf_path = CONVERTER.convert_image_to_pdf(file_path, output_path)
+        return {
+            "status": "success",
+            "input_file": file_path,
+            "output_file": str(pdf_path),
+            "message": f"Successfully converted image to PDF: {pdf_path}",
+        }
+    except Exception as e:
+        return {"status": "error", "input_file": file_path, "error": str(e)}
+
+
+@mcp.tool
+def batch_convert_images_to_pdf(input_dir: str, output_dir: str) -> dict:
+    """
+    Converts all image files in a directory to individual PDF files.
+    Each image becomes a separate single-page PDF.
+
+    Args:
+        input_dir: Directory containing image files (.jpg, .jpeg, .png)
+        output_dir: Directory to save the converted PDF files
+
+    Returns:
+        Dictionary with conversion summary and list of converted files.
+    """
+    try:
+        pdf_paths = CONVERTER.batch_convert_images_to_pdf(input_dir, output_dir)
+        return {
+            "status": "success",
+            "input_directory": input_dir,
+            "output_directory": output_dir,
+            "files_converted": len(pdf_paths),
+            "converted_files": [str(p) for p in pdf_paths],
+            "message": f"Successfully converted {len(pdf_paths)} images to PDF.",
+        }
+    except Exception as e:
+        return {"status": "error", "input_directory": input_dir, "error": str(e)}
+
+
+@mcp.tool
+def merge_images_to_pdf(image_paths: List[str], output_path: str) -> dict:
+    """
+    Merges multiple image files into a single multi-page PDF.
+    Useful when a teacher has scanned essay pages as individual image files.
+
+    Args:
+        image_paths: List of paths to image files (will be merged in this order)
+        output_path: Path for the output multi-page PDF file
+
+    Returns:
+        Dictionary with status and path to the merged PDF file.
+    """
+    try:
+        pdf_path = CONVERTER.merge_images_to_pdf(image_paths, output_path)
+        return {
+            "status": "success",
+            "input_files": image_paths,
+            "output_file": str(pdf_path),
+            "pages": len(image_paths),
+            "message": f"Successfully merged {len(image_paths)} images into PDF: {pdf_path}",
+        }
+    except Exception as e:
+        return {"status": "error", "input_files": image_paths, "error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()
-    

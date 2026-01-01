@@ -27,16 +27,32 @@ This server follows a modular "Heavy Lifter" pattern to manage high-volume data 
 
 ## Modular Toolset
 
+### Document Conversion (Pre-Processing)
+- **`convert_word_to_pdf`**: Converts a single Word document (.doc/.docx) to PDF format for OCR processing.
+- **`batch_convert_word_to_pdf`**: Converts all Word documents in a directory to PDFs before batch processing.
+- **`convert_image_to_pdf`**: Converts a single image (JPEG, PNG) to PDF format.
+- **`batch_convert_images_to_pdf`**: Converts all images in a directory to individual PDF files.
+- **`merge_images_to_pdf`**: Merges multiple images into a single multi-page PDF (e.g., scanned essay pages).
+- **`convert_pdf_to_text`**: Converts a PDF to plain text (for rubrics/reference materials).
+- **`check_conversion_capabilities`**: Verifies which conversion tools are installed and provides setup instructions.
+
+### OCR & Processing Pipeline
 - **`batch_process_documents`**: The entry point. Converts PDFs to images, performs OCR via Qwen-VL, and saves **raw text** to the database.
 - **`get_job_statistics`**: Returns a manifest (student names, page counts, word counts) for a job. Critical for verifying correct page aggregation before scrubbing.
 - **`scrub_processed_job`**: Automatically redacts student names and PII using pre-defined CSV name lists.
 - **`normalize_processed_job`**: (Optional) Uses AI to fix OCR artifacts and typos. Designed for human-in-the-loop verification or agent-triggered cleanup.
 - **`process_pdf_document`**: A lightweight tool for single-file processing and immediate feedback.
+
+### Evaluation & Knowledge Base
 - **`evaluate_job`**: Grades student essays based on a provided rubric and context material.
-- **`search_past_jobs`**: Discover past grading jobs by student name, job name, or essay content keywords.
-- **`export_job_archive`**: Generates a ZIP archive of a job (Evidence + Reports) for offline storage or disputes.
 - **`add_to_knowledge_base`**: Ingests reference materials (textbooks, rubrics) into a local vector store.
 - **`query_knowledge_base`**: Retrieves relevant context chunks for a specific topic/query.
+
+### Archive & Maintenance
+- **`search_past_jobs`**: Discover past grading jobs by student name, job name, or essay content keywords.
+- **`export_job_archive`**: Generates a ZIP archive of a job (Evidence + Reports) for offline storage or disputes.
+- **`cleanup_old_jobs`**: Removes jobs older than retention period.
+- **`delete_knowledge_topic`**: Manually removes obsolete reference materials.
 
 ---
 
@@ -124,14 +140,34 @@ uv sync
 # QWEN_API_KEY, XAI_API_KEY, etc.
 ```
 
-### 2. Development & Inspection
+### 2. Install Optional Conversion Tools
+For document format conversion (Word → PDF, PDF → Text):
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install libreoffice poppler-utils
+```
+
+**macOS:**
+```bash
+brew install --cask libreoffice
+brew install poppler
+```
+
+**Windows:**
+- Download LibreOffice: https://www.libreoffice.org/download/
+- Download Poppler: https://blog.alivate.com.au/poppler-windows/
+
+**Note:** These tools are optional. The agent can check availability using `check_conversion_capabilities` and guide the user if they're needed.
+
+### 3. Development & Inspection
 Run the server with the built-in MCP Inspector to test tools interactively:
 ```bash
 uv run fastmcp dev server.py
 ```
 This opens a browser interface at `http://localhost:5173`.
 
-### 3. Running in Production
+### 4. Running in Production
 Connect this server to your AI client (e.g., Claude Desktop, custom agent):
 ```bash
 uv run python server.py
