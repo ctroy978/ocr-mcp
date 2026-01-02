@@ -134,21 +134,30 @@ class KnowledgeBaseManager:
         pdf_paths = [p for p in expanded_paths if p.lower().endswith(".pdf")]
         other_paths = [p for p in expanded_paths if not p.lower().endswith(".pdf")]
         
-        # 1. Process PDFs with OCRTool (Robust for scanned docs)
+        # 1. Process PDFs (Smart Detection: Native first, then OCR)
         if pdf_paths:
-            print(f"[RAG] Processing {len(pdf_paths)} PDF(s) with OCR...", file=sys.stderr)
+            print(f"[RAG] Processing {len(pdf_paths)} PDF(s) with Smart Detection...", file=sys.stderr)
             try:
                 ocr_tool = OCRTool() # No job context needed for generic ingestion
                 for pdf_path in pdf_paths:
                     try:
-                        text = ocr_tool.extract_text_from_pdf(pdf_path)
+                        # Try native extraction first
+                        extracted_pages = OCRTool.extract_text_from_pdf(pdf_path)
+                        
+                        if extracted_pages:
+                            text = "\n\n".join(extracted_pages)
+                        else:
+                            # Fallback to OCR if native fails or is scanned
+                            print(f"[RAG] Fallback to OCR for: {pdf_path}", file=sys.stderr)
+                            text = ocr_tool.extract_text_via_ocr(pdf_path)
+
                         if text.strip():
                             doc = Document(text=text, metadata={"file_path": pdf_path, "filename": Path(pdf_path).name})
                             documents.append(doc)
                         else:
                             print(f"[RAG] Warning: No text extracted from {pdf_path}", file=sys.stderr)
                     except Exception as e:
-                        print(f"[RAG] Error OCRing {pdf_path}: {e}", file=sys.stderr)
+                        print(f"[RAG] Error processing {pdf_path}: {e}", file=sys.stderr)
             except Exception as e:
                  print(f"[RAG] Failed to initialize OCRTool: {e}", file=sys.stderr)
 

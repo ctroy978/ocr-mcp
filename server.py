@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import sys
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,11 +57,15 @@ NAME_HEADER_PATTERN = regex.compile(
 )
 CONTINUE_HEADER_PATTERN = regex.compile(r"(?im)^\s*continue\s*[:\-]\s*(.+)$")
 
-# Initialize Scrubber
+# Initialize Scrubber and Student Roster
 NAMES_DIR = Path(__file__).parent / "edmcp/data/names"
 loader = NameLoader(NAMES_DIR)
 all_names = loader.load_all_names()
 SCRUBBER = Scrubber(all_names)
+
+# Load full student names for detection (e.g., "pfour six")
+STUDENT_ROSTER = loader.load_full_student_names()
+print(f"[DEBUG] Loaded {len(STUDENT_ROSTER)} students into roster: {sorted(list(STUDENT_ROSTER)[:5])}...", file=sys.stderr)
 
 # Initialize DB and JobManager
 DB_PATH = "edmcp.db"
@@ -121,10 +126,29 @@ class TestAggregate:
 def detect_name(text: str) -> Optional[str]:
     """Detect student name in the top portion of the OCR text."""
     # Limit search to the first ~10 lines to reduce false positives deeper in the page.
-    top_section = "\n".join(text.splitlines()[:10])
+    lines = text.splitlines()[:10]
+    top_section = "\n".join(lines)
+
+    print(f"[DEBUG detect_name] Called with {len(lines)} lines. First 3: {lines[:3]}", file=sys.stderr)
+
+    # First, try the traditional "Name:" or "ID:" pattern
     match = NAME_HEADER_PATTERN.search(top_section)
     if match:
+        print(f"[DEBUG detect_name] Traditional pattern matched: '{match.group(1).strip()}'", file=sys.stderr)
         return match.group(1).strip()
+
+    # If no match, check each line against the student roster
+    for i, line in enumerate(lines, 1):
+        # Normalize the line for case-insensitive comparison
+        normalized_line = regex.sub(r"\s+", " ", line.strip()).casefold()
+
+        # Check if this line matches any full student name in the roster
+        if normalized_line in STUDENT_ROSTER:
+            print(f"[DEBUG] Name detected on line {i}: '{line.strip()}' (normalized: '{normalized_line}')", file=sys.stderr)
+            # Return the original case from the line
+            return line.strip()
+
+    print(f"[DEBUG] No name detected. Checked lines: {[line.strip()[:30] for line in lines]}", file=sys.stderr)
     return None
 
 
@@ -313,42 +337,65 @@ def _process_pdf_core(
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
-    # Use OCR-specific configuration
-    client = get_openai_client(
-        api_key=os.environ.get("QWEN_API_KEY"), base_url=os.environ.get("QWEN_BASE_URL")
-    )
-
-    # Convert PDF to images
-    images = convert_from_path(pdf_path, dpi=dpi)
-
     page_results = []
+    
+    # Try native text extraction first
+    extracted_texts = OCRTool.extract_text_from_pdf(pdf_path)
+    
+    if extracted_texts:
+        for i, text in enumerate(extracted_texts, 1):
+            name = detect_name(text)
+            continuation = detect_continuation_name(text)
 
-    for i, image in enumerate(images, 1):
-        # Convert to bytes
-        buffered = io.BytesIO()
-        image.convert("RGB").save(buffered, format="JPEG", quality=85)
-        image_bytes = buffered.getvalue()
+            # Scrub PII from text if requested
+            final_text = text
+            if scrub:
+                final_text = SCRUBBER.scrub_text(text)
 
-        # OCR with Qwen
-        text = ocr_image_with_qwen(client, image_bytes, model=model)
-
-        # Detect names
-        name = detect_name(text)
-        continuation = detect_continuation_name(text)
-
-        # Scrub PII from text if requested
-        final_text = text
-        if scrub:
-            final_text = SCRUBBER.scrub_text(text)
-
-        page_results.append(
-            PageResult(
-                number=i,
-                text=final_text,
-                detected_name=name,
-                continuation_name=continuation,
+            page_results.append(
+                PageResult(
+                    number=i,
+                    text=final_text,
+                    detected_name=name,
+                    continuation_name=continuation,
+                )
             )
+    else:
+        # Fallback to OCR
+        # Use OCR-specific configuration
+        client = get_openai_client(
+            api_key=os.environ.get("QWEN_API_KEY"), base_url=os.environ.get("QWEN_BASE_URL")
         )
+
+        # Convert PDF to images
+        images = convert_from_path(pdf_path, dpi=dpi)
+
+        for i, image in enumerate(images, 1):
+            # Convert to bytes
+            buffered = io.BytesIO()
+            image.convert("RGB").save(buffered, format="JPEG", quality=85)
+            image_bytes = buffered.getvalue()
+
+            # OCR with Qwen
+            text = ocr_image_with_qwen(client, image_bytes, model=model)
+
+            # Detect names
+            name = detect_name(text)
+            continuation = detect_continuation_name(text)
+
+            # Scrub PII from text if requested
+            final_text = text
+            if scrub:
+                final_text = SCRUBBER.scrub_text(text)
+
+            page_results.append(
+                PageResult(
+                    number=i,
+                    text=final_text,
+                    detected_name=name,
+                    continuation_name=continuation,
+                )
+            )
 
     # Aggregate results
     aggregates = aggregate_tests(page_results, unknown_prefix=unknown_label)
@@ -358,7 +405,7 @@ def _process_pdf_core(
     return {
         "status": "success",
         "file": pdf_path,
-        "total_pages": len(images),
+        "total_pages": len(page_results),
         "students_found": len(aggregates),
         "results": results_json,
     }
@@ -422,7 +469,6 @@ def extract_text_from_image(image_path: str, model: Optional[str] = None) -> dic
         return {"status": "error", "error": str(e)}
 
 
-import sys
 import uuid
 from datetime import datetime
 
@@ -463,7 +509,7 @@ def _batch_process_documents_core(
     )
 
     # Initialize OCR Tool
-    ocr_tool = OCRTool(job_dir=job_dir, job_id=job_id, db_manager=DB_MANAGER)
+    ocr_tool = OCRTool(job_dir=job_dir, job_id=job_id, db_manager=DB_MANAGER, student_roster=STUDENT_ROSTER)
 
     for file_path in files:
         try:
@@ -1018,31 +1064,6 @@ def export_job_archive(job_id: str) -> dict:
 
 
 @mcp.tool
-def convert_word_to_pdf(file_path: str, output_dir: Optional[str] = None) -> dict:
-    """
-    Converts a Word document (DOC/DOCX) to PDF format.
-    Use this before batch processing if teachers submit essays as Word documents.
-
-    Args:
-        file_path: Path to the Word document (.doc or .docx)
-        output_dir: Optional directory to save the PDF (defaults to same directory as input)
-
-    Returns:
-        Dictionary with status and path to the converted PDF file.
-    """
-    try:
-        pdf_path = CONVERTER.convert_word_to_pdf(file_path, output_dir)
-        return {
-            "status": "success",
-            "input_file": file_path,
-            "output_file": str(pdf_path),
-            "message": f"Successfully converted to PDF: {pdf_path}",
-        }
-    except Exception as e:
-        return {"status": "error", "input_file": file_path, "error": str(e)}
-
-
-@mcp.tool
 def convert_pdf_to_text(
     file_path: str, output_path: Optional[str] = None, use_ocr: bool = False
 ) -> dict:
@@ -1074,33 +1095,6 @@ def convert_pdf_to_text(
             "error": str(e),
             "suggestion": "If the PDF is scanned/image-based, try setting use_ocr=True",
         }
-
-
-@mcp.tool
-def batch_convert_word_to_pdf(input_dir: str, output_dir: str) -> dict:
-    """
-    Converts all Word documents in a directory to PDF format.
-    Use this to prepare a batch of Word essays before running batch_process_documents.
-
-    Args:
-        input_dir: Directory containing Word documents (.doc, .docx)
-        output_dir: Directory to save the converted PDF files
-
-    Returns:
-        Dictionary with conversion summary and list of converted files.
-    """
-    try:
-        pdf_paths = CONVERTER.batch_convert_to_pdf(input_dir, output_dir)
-        return {
-            "status": "success",
-            "input_directory": input_dir,
-            "output_directory": output_dir,
-            "files_converted": len(pdf_paths),
-            "converted_files": [str(p) for p in pdf_paths],
-            "message": f"Successfully converted {len(pdf_paths)} Word documents to PDF.",
-        }
-    except Exception as e:
-        return {"status": "error", "input_directory": input_dir, "error": str(e)}
 
 
 @mcp.tool

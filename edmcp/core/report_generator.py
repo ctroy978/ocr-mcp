@@ -171,6 +171,8 @@ class ReportGenerator:
         # Preserve whitespace for the essay text
         essay_text = essay.get('normalized_text') or essay.get('scrubbed_text') or essay.get('raw_text') or ""
         text_style = ParagraphStyle('EssayText', parent=self.styles['Normal'], fontName='Helvetica', leading=14)
-        elements.append(Paragraph(essay_text.replace('\n', '<br/>'), text_style))
+        # Replace form feeds (page separators) with visual separator, then newlines with line breaks
+        essay_text_formatted = essay_text.replace('\f', '<br/><br/>--- Page Break ---<br/><br/>').replace('\n', '<br/>')
+        elements.append(Paragraph(essay_text_formatted, text_style))
 
         doc.build(elements)

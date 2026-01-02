@@ -29,11 +29,6 @@ class DocumentConverter:
 
     def _check_dependencies(self):
         """Check if required conversion tools are available."""
-        # Check for LibreOffice (for Word → PDF)
-        self.has_libreoffice = self._command_exists("soffice") or self._command_exists(
-            "libreoffice"
-        )
-
         # Check for pdftotext (part of poppler-utils)
         self.has_pdftotext = self._command_exists("pdftotext")
 
@@ -48,79 +43,6 @@ class DocumentConverter:
             ).returncode
             == 0
         )
-
-    def convert_word_to_pdf(
-        self,
-        input_path: Union[str, Path],
-        output_dir: Optional[Union[str, Path]] = None,
-    ) -> Path:
-        """
-        Converts a Word document (DOC/DOCX) to PDF using LibreOffice.
-
-        Args:
-            input_path: Path to the Word document
-            output_dir: Directory to save the PDF (defaults to same directory as input)
-
-        Returns:
-            Path to the generated PDF file
-
-        Raises:
-            RuntimeError: If LibreOffice is not available or conversion fails
-            FileNotFoundError: If input file doesn't exist
-        """
-        if not self.has_libreoffice:
-            raise RuntimeError(
-                "LibreOffice is not installed. Please install it:\n"
-                "  Ubuntu/Debian: sudo apt-get install libreoffice\n"
-                "  macOS: brew install --cask libreoffice\n"
-                "  Or download from: https://www.libreoffice.org/download/"
-            )
-
-        input_path = Path(input_path)
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found: {input_path}")
-
-        # Determine output directory
-        if output_dir is None:
-            output_dir = input_path.parent
-        else:
-            output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-        # LibreOffice command for headless conversion
-        # --headless: run without GUI
-        # --convert-to pdf: target format
-        # --outdir: output directory
-        cmd = [
-            "soffice" if self._command_exists("soffice") else "libreoffice",
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(output_dir),
-            str(input_path),
-        ]
-
-        result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Word to PDF conversion failed:\n"
-                f"Command: {' '.join(cmd)}\n"
-                f"Error: {result.stderr}"
-            )
-
-        # LibreOffice creates PDF with same name as input file
-        output_path = output_dir / f"{input_path.stem}.pdf"
-
-        if not output_path.exists():
-            raise RuntimeError(
-                f"Conversion appeared to succeed but output file not found: {output_path}"
-            )
-
-        return output_path
 
     def convert_pdf_to_text(
         self,
@@ -159,7 +81,7 @@ class DocumentConverter:
             from edmcp.tools.ocr import OCRTool
 
             ocr_tool = OCRTool()
-            text = ocr_tool.extract_text_from_pdf(input_path)
+            text = ocr_tool.extract_text_via_ocr(input_path)
             output_path.write_text(text, encoding="utf-8")
         else:
             # Use pdftotext for native text extraction
@@ -185,50 +107,6 @@ class DocumentConverter:
                 )
 
         return output_path
-
-    def batch_convert_to_pdf(
-        self,
-        input_dir: Union[str, Path],
-        output_dir: Union[str, Path],
-        extensions: Optional[List[str]] = None,
-    ) -> List[Path]:
-        """
-        Converts all Word documents in a directory to PDF.
-
-        Args:
-            input_dir: Directory containing Word documents
-            output_dir: Directory to save converted PDFs
-            extensions: File extensions to convert (default: ['.doc', '.docx'])
-
-        Returns:
-            List of paths to generated PDF files
-        """
-        if extensions is None:
-            extensions = [".doc", ".docx"]
-
-        input_dir = Path(input_dir)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        converted_files = []
-        errors = []
-
-        # Find all matching files
-        for ext in extensions:
-            # Case-insensitive search
-            for pattern in [f"*{ext}", f"*{ext.upper()}"]:
-                for file_path in input_dir.glob(pattern):
-                    try:
-                        pdf_path = self.convert_word_to_pdf(file_path, output_dir)
-                        converted_files.append(pdf_path)
-                    except Exception as e:
-                        errors.append(f"{file_path.name}: {str(e)}")
-
-        if errors:
-            # Still return successful conversions, but log errors
-            print(f"[Converter] Warnings during batch conversion: {errors}")
-
-        return converted_files
 
     def convert_image_to_pdf(
         self,
@@ -433,15 +311,6 @@ class DocumentConverter:
             Dictionary with capability flags and installation instructions
         """
         return {
-            "word_to_pdf": {
-                "available": self.has_libreoffice,
-                "tool": "LibreOffice",
-                "install_instructions": {
-                    "ubuntu": "sudo apt-get install libreoffice",
-                    "macos": "brew install --cask libreoffice",
-                    "windows": "Download from https://www.libreoffice.org/",
-                },
-            },
             "pdf_to_text": {
                 "available": self.has_pdftotext,
                 "tool": "pdftotext (poppler-utils)",

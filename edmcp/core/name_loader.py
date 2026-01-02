@@ -59,3 +59,29 @@ class NameLoader:
                     val = self._normalize(row["name"])
                     if self._is_valid(val): names.add(val)
         return names
+
+    def load_full_student_names(self) -> Set[str]:
+        """
+        Loads full student names (first + last) from school_names.csv.
+        Returns a set of normalized full names like "john doe".
+        """
+        full_names = set()
+        school_file = self.names_dir / "school_names.csv"
+
+        if not school_file.exists():
+            return full_names
+
+        with open(school_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                first = row.get("first_name", "").strip()
+                last = row.get("last_name", "").strip()
+
+                if first and last:
+                    # Create full name and normalize
+                    full_name = f"{first} {last}"
+                    normalized = self._normalize(full_name)
+                    if len(normalized) >= self.min_length:
+                        full_names.add(normalized)
+
+        return full_names

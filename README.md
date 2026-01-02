@@ -28,8 +28,8 @@ This server follows a modular "Heavy Lifter" pattern to manage high-volume data 
 ## Modular Toolset
 
 ### Document Conversion (Pre-Processing)
-- **`convert_word_to_pdf`**: Converts a single Word document (.doc/.docx) to PDF format for OCR processing.
-- **`batch_convert_word_to_pdf`**: Converts all Word documents in a directory to PDFs before batch processing.
+**Note:** This server accepts **PDF files only** for essay processing. Teachers should save/export their Word documents as PDFs before submission. Most word processors have a built-in "Save As PDF" or "Export to PDF" function.
+
 - **`convert_image_to_pdf`**: Converts a single image (JPEG, PNG) to PDF format.
 - **`batch_convert_images_to_pdf`**: Converts all images in a directory to individual PDF files.
 - **`merge_images_to_pdf`**: Merges multiple images into a single multi-page PDF (e.g., scanned essay pages).
@@ -37,7 +37,7 @@ This server follows a modular "Heavy Lifter" pattern to manage high-volume data 
 - **`check_conversion_capabilities`**: Verifies which conversion tools are installed and provides setup instructions.
 
 ### OCR & Processing Pipeline
-- **`batch_process_documents`**: The entry point. Converts PDFs to images, performs OCR via Qwen-VL, and saves **raw text** to the database.
+- **`batch_process_documents`**: The entry point. Accepts a directory of **PDF files**, converts them to images, performs OCR via Qwen-VL, and saves **raw text** to the database.
 - **`get_job_statistics`**: Returns a manifest (student names, page counts, word counts) for a job. Critical for verifying correct page aggregation before scrubbing.
 - **`scrub_processed_job`**: Automatically redacts student names and PII using pre-defined CSV name lists.
 - **`normalize_processed_job`**: (Optional) Uses AI to fix OCR artifacts and typos. Designed for human-in-the-loop verification or agent-triggered cleanup.
@@ -141,24 +141,22 @@ uv sync
 ```
 
 ### 2. Install Optional Conversion Tools
-For document format conversion (Word → PDF, PDF → Text):
+For PDF text extraction (used for rubrics/reference materials):
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install libreoffice poppler-utils
+sudo apt-get install poppler-utils
 ```
 
 **macOS:**
 ```bash
-brew install --cask libreoffice
 brew install poppler
 ```
 
 **Windows:**
-- Download LibreOffice: https://www.libreoffice.org/download/
 - Download Poppler: https://blog.alivate.com.au/poppler-windows/
 
-**Note:** These tools are optional. The agent can check availability using `check_conversion_capabilities` and guide the user if they're needed.
+**Note:** This tool is optional. If not installed, you can use the OCR method by setting `use_ocr=True` when converting PDFs to text. The agent can check availability using `check_conversion_capabilities`.
 
 ### 3. Development & Inspection
 Run the server with the built-in MCP Inspector to test tools interactively:
