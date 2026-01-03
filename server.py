@@ -1207,76 +1207,140 @@ def get_report_file(job_id: str, report_type: str, essay_id: Optional[int] = Non
 
 
 @mcp.tool
-async def send_student_feedback_emails(
-    job_id: str,
-    subject: Optional[str] = None,
-    template_name: Optional[str] = "default_feedback",
-    dry_run: bool = False,
-    filter_students: Optional[Any] = None
-) -> dict:
+def download_reports_locally(job_id: str) -> dict:
+    """
+    Downloads report files from database to local temp directory for teacher access.
+
+    This tool makes reports available for download regardless of where the MCP server
+    is running (local or remote). It retrieves reports from the database and saves
+    them to the local temp directory where the agent can access them.
+
+    Use this tool after grading is complete to make reports downloadable by the teacher.
+
+    Args:
+        job_id: The job ID for the reports to download
+
+    Returns:
+        Dictionary with:
+            - status: "success" or "error"
+            - gradebook_path: Local path to CSV gradebook
+            - feedback_zip_path: Local path to student feedback ZIP
+            - message: Human-readable message
+
+    Example:
+        download_reports_locally(job_id="job_20260103_061455_5517d0a1")
+
+        Returns:
+        {
+            "status": "success",
+            "gradebook_path": "/tmp/job_20260103_061455_5517d0a1_gradebook.csv",
+            "feedback_zip_path": "/tmp/job_20260103_061455_5517d0a1_student_feedback.zip",
+            "message": "Reports downloaded successfully to local temp directory"
+        }
+    """
+    try:
+        import base64
+        import tempfile
+        from pathlib import Path
+
+        # Get gradebook CSV from database
+        gradebook = DB_MANAGER.get_report_with_metadata(job_id, 'gradebook_csv')
+        if not gradebook:
+            return {
+                "status": "error",
+                "message": f"Gradebook CSV not found for job {job_id}. Make sure reports were generated."
+            }
+
+        # Get feedback ZIP from database
+        feedback_zip = DB_MANAGER.get_report_with_metadata(job_id, 'student_feedback_zip')
+        if not feedback_zip:
+            return {
+                "status": "error",
+                "message": f"Student feedback ZIP not found for job {job_id}. Make sure reports were generated."
+            }
+
+        # Create temp directory for this job
+        temp_dir = Path(tempfile.gettempdir()) / "edagent_downloads" / job_id
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save gradebook CSV
+        gradebook_path = temp_dir / gradebook['filename']
+        with open(gradebook_path, 'wb') as f:
+            f.write(gradebook['content'])
+
+        # Save feedback ZIP
+        zip_path = temp_dir / feedback_zip['filename']
+        with open(zip_path, 'wb') as f:
+            f.write(feedback_zip['content'])
+
+        return {
+            "status": "success",
+            "gradebook_path": str(gradebook_path.absolute()),
+            "feedback_zip_path": str(zip_path.absolute()),
+            "message": f"Reports downloaded successfully to {temp_dir}"
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error downloading reports: {str(e)}"
+        }
+
+
+@mcp.tool
+async def send_student_feedback_emails(job_id: str) -> dict:
     """
     Sends individual PDF feedback reports to students via email.
 
-    IMPORTANT: This sends real emails. Use dry_run=True to preview first.
+    This is a fully automatic tool that handles the entire email distribution process:
+    1. Retrieves all graded essays for the job from the database
+    2. Extracts student names from essays
+    3. Matches student names to email addresses in roster (with fuzzy matching for OCR errors)
+    4. Retrieves PDF feedback reports from database
+    5. Sends personalized emails with PDF attachments
+    6. Logs all sends/failures/skips to email_log.jsonl
 
-    The tool will:
-    1. Load student email addresses from school_names.csv
-    2. Find corresponding PDF feedback reports
-    3. Send personalized emails with PDF attachments
-    4. Log all sends/failures to email_log.jsonl
-
-    Idempotent: Re-running skips students who already received emails.
+    The tool is fully autonomous and handles:
+    - Fuzzy name matching (handles OCR errors like "Pfour six" → "P4 Six")
+    - Auto-skips students with no confident match (< 80% similarity)
+    - Auto-skips students already sent (idempotent - safe to re-run)
+    - Auto-skips students with no email in roster
 
     Args:
         job_id: The ID of the graded job to send feedback for.
-        subject: Custom email subject (default: "Your Assignment Feedback - {assignment_name}").
-        template_name: Optional. Name of the email template. Defaults to 'default_feedback' if omitted or null. Do not provide if using default.
-        dry_run: If True, validates emails but doesn't send (default: False).
-        filter_students: Optional list of strings. Provide a standard JSON list of names (e.g. ["Name 1", "Name 2"]). Do NOT stringify the list unless absolutely necessary.
 
     Returns:
-        Summary with count of sent/failed/skipped emails and path to log file.
+        Summary with:
+        - status: "success" or "error"
+        - total_students: Total number of students in the job
+        - emails_sent: Number of emails successfully sent
+        - emails_skipped: Number of students skipped
+        - skipped_details: List of skipped students with reasons
+        - log_file: Path to email_log.jsonl for audit trail
 
     Example:
-        # Preview what would be sent
-        send_student_feedback_emails(job_id="job_123", dry_run=True)
+        send_student_feedback_emails(job_id="job_20260103_061455_5517d0a1")
 
-        # Send to all students
-        send_student_feedback_emails(job_id="job_123")
-
-        # Send to specific students only
-        send_student_feedback_emails(job_id="job_123", filter_students=["John Doe", "Jane Smith"])
+        Returns:
+        {
+            "status": "success",
+            "total_students": 25,
+            "emails_sent": 23,
+            "emails_skipped": 2,
+            "skipped_details": [
+                {"student": "Unknown Student", "reason": "No email in roster"},
+                {"student": "Pfour seven", "reason": "Low confidence match (best: 65%)"}
+            ]
+        }
     """
-    import json
-
-    # Handle agent quirks: explicit nulls or stringified lists
-    final_template = template_name if template_name else "default_feedback"
-    final_filter = None
-
-    if filter_students:
-        if isinstance(filter_students, str):
-            try:
-                # Try to parse string as JSON list
-                parsed = json.loads(filter_students)
-                if isinstance(parsed, list):
-                    final_filter = [str(x) for x in parsed]
-                else:
-                    # If it's just a single string name, wrap it
-                    final_filter = [filter_students]
-            except json.JSONDecodeError:
-                # Fallback: treat as single student name
-                final_filter = [filter_students]
-        elif isinstance(filter_students, list):
-            final_filter = [str(x) for x in filter_students]
-
     try:
-        # Direct await since tool is now async
+        # Call the simplified emailer tool with automatic fuzzy matching enabled
         result = await EMAILER_TOOL.send_feedback_emails(
             job_id=job_id,
-            subject_template=subject,
-            body_template=final_template,
-            dry_run=dry_run,
-            filter_students=final_filter
+            subject_template=None,  # Use default
+            body_template="default_feedback",
+            dry_run=False,
+            filter_students=None  # Send to all students
         )
         return result
     except Exception as e:

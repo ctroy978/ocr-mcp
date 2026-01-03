@@ -1,7 +1,8 @@
 import csv
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from edmcp.core.name_loader import NameLoader
 
 
@@ -70,22 +71,62 @@ class StudentRoster:
                     # Map normalized name to student info
                     self._student_map[normalized_name] = student_info
 
-    def get_email_for_student(self, student_name: str) -> Optional[str]:
+    def _fuzzy_match(self, student_name: str, threshold: float = 0.80) -> Tuple[Optional[StudentInfo], float]:
+        """
+        Performs fuzzy matching to find the best match for a student name.
+        Uses sequence matching to handle OCR errors and typos.
+
+        Args:
+            student_name: Student name to match (e.g., "Pfour six")
+            threshold: Minimum similarity score (0.0 to 1.0) to consider a match
+
+        Returns:
+            Tuple of (StudentInfo or None, similarity_score)
+        """
+        normalized_input = self._normalize(student_name)
+        best_match = None
+        best_score = 0.0
+
+        for normalized_roster_name, student_info in self._student_map.items():
+            # Calculate similarity ratio
+            similarity = SequenceMatcher(None, normalized_input, normalized_roster_name).ratio()
+
+            if similarity > best_score:
+                best_score = similarity
+                best_match = student_info
+
+        # Only return match if it meets the threshold
+        if best_score >= threshold:
+            return best_match, best_score
+
+        return None, best_score
+
+    def get_email_for_student(self, student_name: str, fuzzy: bool = True, fuzzy_threshold: float = 0.80) -> Optional[str]:
         """
         Looks up email address for a student by their full name.
-        Handles normalization for case-insensitive matching.
+        Handles normalization for case-insensitive matching and optional fuzzy matching.
 
         Args:
             student_name: Student's full name (e.g., "John Doe")
+            fuzzy: Enable fuzzy matching for OCR errors (default: True)
+            fuzzy_threshold: Minimum similarity score for fuzzy match (default: 0.80)
 
         Returns:
             Email address if found, None otherwise
         """
+        # Try exact match first (fast path)
         normalized = self._normalize(student_name)
         student_info = self._student_map.get(normalized)
 
         if student_info and student_info.email:
             return student_info.email
+
+        # Try fuzzy matching if enabled
+        if fuzzy:
+            match, score = self._fuzzy_match(student_name, fuzzy_threshold)
+            if match and match.email:
+                return match.email
+
         return None
 
     def get_student_info(self, student_name: str) -> Optional[StudentInfo]:
