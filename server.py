@@ -69,7 +69,6 @@ SCRUBBER = Scrubber(all_names)
 
 # Load full student names for detection (e.g., "pfour six")
 STUDENT_ROSTER = loader.load_full_student_names()
-print(f"[DEBUG] Loaded {len(STUDENT_ROSTER)} students into roster: {sorted(list(STUDENT_ROSTER)[:5])}...", file=sys.stderr)
 
 # Initialize DB and JobManager
 # Use paths relative to this server.py file, not current working directory
