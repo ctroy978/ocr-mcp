@@ -13,12 +13,15 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 class ReportGenerator:
     """
     Handles generation of CSV gradebooks and individual student feedback PDFs.
+    PDFs are stored in the database for persistence and emailing, and also
+    written to the filesystem for AI agent/teacher download.
     """
 
-    def __init__(self, output_base_dir: str = "data/reports"):
+    def __init__(self, output_base_dir: str = "data/reports", db_manager=None):
         self.output_base_dir = Path(output_base_dir)
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self.styles = getSampleStyleSheet()
+        self.db_manager = db_manager
 
     def _get_job_dir(self, job_id: str) -> Path:
         job_dir = self.output_base_dir / job_id
@@ -72,6 +75,7 @@ class ReportGenerator:
     def generate_student_feedback_pdfs(self, job_id: str, essays: List[Dict[str, Any]]) -> str:
         """
         Generates individual PDF feedback reports for each student.
+        Stores PDFs in the database AND writes them to the filesystem.
         Returns the path to the directory containing the PDFs.
         """
         job_dir = self._get_job_dir(job_id)
@@ -82,8 +86,21 @@ class ReportGenerator:
             student_name = essay.get('student_name', 'Unknown Student').replace(' ', '_')
             essay_id = essay.get('id', 'unknown')
             pdf_path = pdf_dir / f"{student_name}_{essay_id}.pdf"
-            
+
+            # Generate PDF to filesystem
             self._create_student_pdf(essay, pdf_path)
+
+            # Also store in database if db_manager is available
+            if self.db_manager and essay_id != 'unknown':
+                with open(pdf_path, 'rb') as f:
+                    pdf_content = f.read()
+                self.db_manager.store_report(
+                    job_id=job_id,
+                    report_type='student_pdf',
+                    filename=f"{student_name}_{essay_id}.pdf",
+                    content=pdf_content,
+                    essay_id=essay_id
+                )
 
         return str(pdf_dir)
 

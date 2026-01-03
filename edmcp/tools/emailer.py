@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
@@ -111,6 +112,8 @@ class EmailerTool:
     def _get_student_pdf_path(self, job_id: str, student_name: str, essay_id: int) -> Path:
         """
         Locate the PDF file for a specific student.
+        First tries to retrieve from database and write to temp file.
+        Falls back to filesystem if not in database (for backwards compatibility).
 
         Args:
             job_id: Job ID
@@ -118,8 +121,25 @@ class EmailerTool:
             essay_id: Essay database ID
 
         Returns:
-            Path to PDF file
+            Path to PDF file (either temp file from DB or filesystem path)
         """
+        # Try to get PDF from database first
+        pdf_content = self.db_manager.get_student_pdf(essay_id)
+
+        if pdf_content:
+            # Write to temp file for email attachment
+            safe_name = student_name.replace(' ', '_')
+            temp_pdf = tempfile.NamedTemporaryFile(
+                mode='wb',
+                suffix='.pdf',
+                prefix=f'{safe_name}_{essay_id}_',
+                delete=False  # We'll clean up manually after email is sent
+            )
+            temp_pdf.write(pdf_content)
+            temp_pdf.close()
+            return Path(temp_pdf.name)
+
+        # Fallback to filesystem (for backwards compatibility)
         job_dir = self.report_generator._get_job_dir(job_id)
         pdf_dir = job_dir / "feedback_pdfs"
 
@@ -207,6 +227,9 @@ class EmailerTool:
                 print(f"[Emailer] SKIP: Already sent to {student_name}", file=sys.stderr)
                 continue
 
+            pdf_path = None
+            is_temp_file = False
+
             try:
                 # 1. Email lookup
                 email = self.student_roster.get_email_for_student(student_name)
@@ -226,8 +249,11 @@ class EmailerTool:
                     })
                     continue
 
-                # 2. PDF lookup
+                # 2. PDF lookup (may create temp file from database)
                 pdf_path = self._get_student_pdf_path(job_id, student_name, essay_id)
+                # Check if this is a temp file (will be in system temp directory)
+                is_temp_file = str(pdf_path).startswith(tempfile.gettempdir())
+
                 if not pdf_path.exists():
                     results["failed"].append({
                         "student": student_name,
@@ -322,6 +348,13 @@ class EmailerTool:
                     "error": str(e)
                 })
                 # Continue to next student
+            finally:
+                # Clean up temp file if it was created from database
+                if pdf_path and is_temp_file and pdf_path.exists():
+                    try:
+                        pdf_path.unlink()
+                    except Exception as cleanup_error:
+                        print(f"[Emailer] Warning: Could not delete temp file {pdf_path}: {cleanup_error}", file=sys.stderr)
 
         # Return summary
         return {

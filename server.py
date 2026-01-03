@@ -72,12 +72,14 @@ STUDENT_ROSTER = loader.load_full_student_names()
 print(f"[DEBUG] Loaded {len(STUDENT_ROSTER)} students into roster: {sorted(list(STUDENT_ROSTER)[:5])}...", file=sys.stderr)
 
 # Initialize DB and JobManager
-DB_PATH = "edmcp.db"
-JOBS_DIR = Path("data/jobs")
+# Use paths relative to this server.py file, not current working directory
+SERVER_DIR = Path(__file__).parent
+DB_PATH = SERVER_DIR / "edmcp.db"
+JOBS_DIR = SERVER_DIR / "data/jobs"
 DB_MANAGER = DatabaseManager(DB_PATH)
 JOB_MANAGER = JobManager(JOBS_DIR, DB_MANAGER)
-KB_MANAGER = KnowledgeBaseManager("data/vector_store")
-REPORT_GENERATOR = ReportGenerator("data/reports")
+KB_MANAGER = KnowledgeBaseManager(str(SERVER_DIR / "data/vector_store"))
+REPORT_GENERATOR = ReportGenerator(str(SERVER_DIR / "data/reports"), db_manager=DB_MANAGER)
 
 # Initialize Email Components
 STUDENT_ROSTER_WITH_EMAILS = StudentRoster(NAMES_DIR)
@@ -1080,7 +1082,7 @@ def generate_gradebook(job_id: str) -> dict:
         return {
             "status": "success",
             "job_id": job_id,
-            "csv_path": csv_path,
+            "csv_path": str(Path(csv_path).absolute()),  # Return absolute path
             "message": f"Gradebook generated at {csv_path}",
         }
     except Exception as e:
@@ -1111,8 +1113,8 @@ def generate_student_feedback(job_id: str) -> dict:
         return {
             "status": "success",
             "job_id": job_id,
-            "pdf_directory": pdf_dir,
-            "zip_path": zip_path,
+            "pdf_directory": str(Path(pdf_dir).absolute()),  # Return absolute path
+            "zip_path": str(Path(zip_path).absolute()),      # Return absolute path
             "message": f"Individual feedback PDFs generated and zipped at {zip_path}",
         }
     except Exception as e:

@@ -49,6 +49,21 @@ class DatabaseManager:
             )
         """)
 
+        # Reports Table (stores generated PDFs and other report files)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                report_type TEXT NOT NULL,
+                essay_id INTEGER,
+                filename TEXT,
+                content BLOB,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES jobs (id),
+                FOREIGN KEY (essay_id) REFERENCES essays (id)
+            )
+        """)
+
         self.conn.commit()
         self._migrate_schema()
 
@@ -176,7 +191,7 @@ class DatabaseManager:
 
     def delete_job(self, job_id: str) -> bool:
         """
-        Deletes a job and all its associated essays from the database.
+        Deletes a job and all its associated essays and reports from the database.
         Returns True if the job existed and was deleted, False otherwise.
         """
         cursor = self.conn.cursor()
@@ -185,6 +200,9 @@ class DatabaseManager:
         cursor.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,))
         if not cursor.fetchone():
             return False
+
+        # Delete reports (manual cascade since foreign_keys pragma might be off)
+        cursor.execute("DELETE FROM reports WHERE job_id = ?", (job_id,))
 
         # Delete essays (manual cascade since foreign_keys pragma might be off)
         cursor.execute("DELETE FROM essays WHERE job_id = ?", (job_id,))
@@ -278,6 +296,117 @@ class DatabaseManager:
                 jobs[job_id]["matches"].append({"reason": reason, "snippet": snippet})
 
         return list(jobs.values())
+
+    def store_report(
+        self,
+        job_id: str,
+        report_type: str,
+        filename: str,
+        content: bytes,
+        essay_id: Optional[int] = None,
+    ) -> int:
+        """
+        Stores a generated report (PDF, CSV, etc.) in the database.
+
+        Args:
+            job_id: The job this report belongs to
+            report_type: Type of report (e.g., 'student_pdf', 'gradebook_csv')
+            filename: Original filename
+            content: Binary content of the file
+            essay_id: Optional essay ID for per-student reports
+
+        Returns:
+            The report ID
+        """
+        created_at = datetime.now().isoformat()
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO reports (job_id, report_type, essay_id, filename, content, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (job_id, report_type, essay_id, filename, content, created_at),
+        )
+        self.conn.commit()
+        report_id = cursor.lastrowid
+        assert report_id is not None, "Failed to get report ID after insert"
+        return report_id
+
+    def get_student_pdf(self, essay_id: int) -> Optional[bytes]:
+        """
+        Retrieves the PDF report for a specific essay.
+
+        Args:
+            essay_id: The essay ID
+
+        Returns:
+            PDF content as bytes, or None if not found
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT content FROM reports
+            WHERE essay_id = ? AND report_type = 'student_pdf'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (essay_id,),
+        )
+        row = cursor.fetchone()
+        return row["content"] if row else None
+
+    def get_report(
+        self, job_id: str, report_type: str, essay_id: Optional[int] = None
+    ) -> Optional[bytes]:
+        """
+        Retrieves a report by job_id, type, and optional essay_id.
+
+        Args:
+            job_id: The job ID
+            report_type: Type of report
+            essay_id: Optional essay ID for per-student reports
+
+        Returns:
+            Report content as bytes, or None if not found
+        """
+        cursor = self.conn.cursor()
+        if essay_id is not None:
+            cursor.execute(
+                """
+                SELECT content FROM reports
+                WHERE job_id = ? AND report_type = ? AND essay_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (job_id, report_type, essay_id),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT content FROM reports
+                WHERE job_id = ? AND report_type = ? AND essay_id IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (job_id, report_type),
+            )
+        row = cursor.fetchone()
+        return row["content"] if row else None
+
+    def delete_job_reports(self, job_id: str) -> int:
+        """
+        Deletes all reports associated with a job.
+
+        Args:
+            job_id: The job ID
+
+        Returns:
+            Number of reports deleted
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM reports WHERE job_id = ?", (job_id,))
+        self.conn.commit()
+        return cursor.rowcount
 
     def close(self):
         """Closes the database connection."""
