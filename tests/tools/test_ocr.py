@@ -33,18 +33,27 @@ def temp_job_dir(tmp_path):
 def test_ocr_tool_process_pdf(mock_openai, mock_pdf2image, temp_job_dir):
     """Test that the OCR tool processes a PDF and writes JSONL."""
     pdf_path = Path("test.pdf")
-    
+
     tool = OCRTool(job_dir=temp_job_dir)
-    result_path = tool.process_pdf(pdf_path)
-    
+    result = tool.process_pdf(pdf_path)
+
+    # Check return structure
+    assert isinstance(result, dict)
+    assert "output_path" in result
+    assert "used_ocr" in result
+    assert "student_count" in result
+
+    result_path = result["output_path"]
     assert result_path.exists()
     assert result_path.name == "ocr_results.jsonl"
-    
+    assert result["used_ocr"] is True  # Mock uses OCR (no PDF extraction)
+    assert result["student_count"] == 1
+
     # Read the JSONL and verify content
     with open(result_path, "r") as f:
         lines = f.readlines()
-        assert len(lines) == 1 # 1 aggregate result (for now, keeping existing aggregation logic) 
-        
+        assert len(lines) == 1 # 1 aggregate result (for now, keeping existing aggregation logic)
+
         data = json.loads(lines[0])
         assert data["student_name"] == "Unknown Student 01"
         assert "Extracted OCR Text" in data["text"]
@@ -54,19 +63,22 @@ def test_ocr_tool_aggregation(mock_openai, mock_pdf2image, temp_job_dir):
     """Test name detection and aggregation logic."""
     # Custom mock to return different text for each page
     client = mock_openai.return_value
-    
+
     # Page 1 has a name, Page 2 is a continuation
     resp1 = MagicMock()
     resp1.choices = [MagicMock(message=MagicMock(content="Name: John Doe\nEssay content..."))]
-    
+
     resp2 = MagicMock()
     resp2.choices = [MagicMock(message=MagicMock(content="Continue: John Doe\nMore essay content..."))]
-    
+
     client.chat.completions.create.side_effect = [resp1, resp2]
-    
+
     tool = OCRTool(job_dir=temp_job_dir)
-    result_path = tool.process_pdf(Path("test.pdf"))
-    
+    result = tool.process_pdf(Path("test.pdf"))
+
+    result_path = result["output_path"]
+    assert result["student_count"] == 1
+
     with open(result_path, "r") as f:
         data = json.loads(f.readline())
         assert data["student_name"] == "John Doe"

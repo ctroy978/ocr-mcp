@@ -39,6 +39,10 @@ from edmcp.core.prompts import get_evaluation_prompt
 from edmcp.core.knowledge import KnowledgeBaseManager
 from edmcp.core.report_generator import ReportGenerator
 from edmcp.core.utils import retry_with_backoff, extract_json_from_text
+from edmcp.core.student_roster import StudentRoster
+from edmcp.core.email_sender import EmailSender
+from edmcp.tools.emailer import EmailerTool
+from edmcp.tools.name_fixer import NameFixerTool
 
 # Define common AI exceptions for retries
 AI_RETRIABLE_EXCEPTIONS = (
@@ -74,6 +78,22 @@ DB_MANAGER = DatabaseManager(DB_PATH)
 JOB_MANAGER = JobManager(JOBS_DIR, DB_MANAGER)
 KB_MANAGER = KnowledgeBaseManager("data/vector_store")
 REPORT_GENERATOR = ReportGenerator("data/reports")
+
+# Initialize Email Components
+STUDENT_ROSTER_WITH_EMAILS = StudentRoster(NAMES_DIR)
+EMAIL_SENDER = EmailSender(
+    smtp_host=os.environ.get("SMTP_HOST", "smtp-relay.brevo.com"),
+    smtp_port=int(os.environ.get("SMTP_PORT", "587")),
+    smtp_user=os.environ.get("SMTP_USER", ""),
+    smtp_pass=os.environ.get("SMTP_PASS", ""),
+    from_email=os.environ.get("FROM_EMAIL", ""),
+    from_name=os.environ.get("FROM_NAME", "Grade Reports"),
+    use_tls=os.environ.get("SMTP_TLS", "true").lower() == "true"
+)
+EMAILER_TOOL = EmailerTool(DB_MANAGER, REPORT_GENERATOR, STUDENT_ROSTER_WITH_EMAILS, EMAIL_SENDER)
+
+# Initialize Name Fixer Tool
+NAME_FIXER_TOOL = NameFixerTool(DB_MANAGER, STUDENT_ROSTER_WITH_EMAILS, REPORT_GENERATOR)
 
 # Initialize Cleanup Tool
 CLEANUP_TOOL = CleanupTool(DB_MANAGER, KB_MANAGER, JOB_MANAGER)
@@ -129,12 +149,12 @@ def detect_name(text: str) -> Optional[str]:
     lines = text.splitlines()[:10]
     top_section = "\n".join(lines)
 
-    print(f"[DEBUG detect_name] Called with {len(lines)} lines. First 3: {lines[:3]}", file=sys.stderr)
+
 
     # First, try the traditional "Name:" or "ID:" pattern
     match = NAME_HEADER_PATTERN.search(top_section)
     if match:
-        print(f"[DEBUG detect_name] Traditional pattern matched: '{match.group(1).strip()}'", file=sys.stderr)
+
         return match.group(1).strip()
 
     # If no match, check each line against the student roster
@@ -144,11 +164,11 @@ def detect_name(text: str) -> Optional[str]:
 
         # Check if this line matches any full student name in the roster
         if normalized_line in STUDENT_ROSTER:
-            print(f"[DEBUG] Name detected on line {i}: '{line.strip()}' (normalized: '{normalized_line}')", file=sys.stderr)
+
             # Return the original case from the line
             return line.strip()
 
-    print(f"[DEBUG] No name detected. Checked lines: {[line.strip()[:30] for line in lines]}", file=sys.stderr)
+
     return None
 
 
@@ -338,10 +358,11 @@ def _process_pdf_core(
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
     page_results = []
-    
+    used_ocr = False
+
     # Try native text extraction first
     extracted_texts = OCRTool.extract_text_from_pdf(pdf_path)
-    
+
     if extracted_texts:
         for i, text in enumerate(extracted_texts, 1):
             name = detect_name(text)
@@ -362,6 +383,7 @@ def _process_pdf_core(
             )
     else:
         # Fallback to OCR
+        used_ocr = True
         # Use OCR-specific configuration
         client = get_openai_client(
             api_key=os.environ.get("QWEN_API_KEY"), base_url=os.environ.get("QWEN_BASE_URL")
@@ -402,9 +424,13 @@ def _process_pdf_core(
 
     results_json = [agg.to_json_record(pdf_path) for agg in aggregates]
 
+    processing_method = "OCR (scanned/image PDF)" if used_ocr else "Fast text extraction (typed/digital PDF)"
+
     return {
         "status": "success",
         "file": pdf_path,
+        "processing_method": processing_method,
+        "used_ocr": used_ocr,
         "total_pages": len(page_results),
         "students_found": len(aggregates),
         "results": results_json,
@@ -419,17 +445,23 @@ def process_pdf_document(
     unknown_label: str = "Unknown Student",
 ) -> dict:
     """
-    Process a single PDF document and return the full results in the response.
+    Process a single PDF document using the fastest available method.
     WARNING: Use this only for individual files. For batches, use batch_process_documents.
+
+    IMPORTANT: This tool automatically detects the PDF type:
+    - Typed/digital PDFs: Uses FAST text extraction (no OCR, free, instant)
+    - Scanned/image PDFs: Falls back to OCR (slower, uses AI model)
+
+    The return message will clearly indicate which method was used.
 
     Args:
         pdf_path: Path to the PDF file to process
-        dpi: Resolution for PDF to image conversion (default: 220)
-        model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
+        dpi: DPI for OCR image conversion (default: 220, only used if OCR is needed)
+        model: Qwen model to use for OCR fallback (default: env QWEN_API_MODEL or qwen-vl-max)
         unknown_label: Label for students without detected names
 
     Returns:
-        Dictionary containing extracted text and student data.
+        Dictionary containing extracted text, student data, and processing method used.
     """
     try:
         return _process_pdf_core(pdf_path, dpi, model, unknown_label)
@@ -492,6 +524,8 @@ def _batch_process_documents_core(
     internal_jsonl = job_dir / "ocr_results.jsonl"
 
     files_processed = 0
+    files_using_ocr = 0
+    files_using_text_extraction = 0
     errors = []
 
     # Find all PDF files (case-insensitive extension)
@@ -516,7 +550,14 @@ def _batch_process_documents_core(
             print(f"[OCR-MCP] Processing {file_path.name}...", file=sys.stderr)
 
             # Use OCR Tool to process file (Handles DB + JSONL)
-            ocr_tool.process_pdf(file_path, dpi=dpi)
+            result = ocr_tool.process_pdf(file_path, dpi=dpi)
+
+            # Track processing method
+            if result.get("used_ocr"):
+                files_using_ocr += 1
+            else:
+                files_using_text_extraction += 1
+
             files_processed += 1
 
         except Exception as e:
@@ -533,11 +574,24 @@ def _batch_process_documents_core(
         file=sys.stderr,
     )
 
+    # Build processing method summary
+    method_summary = []
+    if files_using_text_extraction > 0:
+        method_summary.append(f"{files_using_text_extraction} via fast text extraction")
+    if files_using_ocr > 0:
+        method_summary.append(f"{files_using_ocr} via OCR")
+    method_str = " and ".join(method_summary) if method_summary else "unknown method"
+
     return {
         "status": "success",
         "job_id": job_id,
         "job_name": job_name,
-        "summary": f"Processed {files_processed} files. Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
+        "summary": f"Processed {files_processed} files ({method_str}). Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
+        "processing_details": {
+            "total_files": files_processed,
+            "text_extraction": files_using_text_extraction,
+            "ocr": files_using_ocr,
+        },
         "output_file": str(internal_jsonl.absolute()),
         "errors": errors if errors else None,
     }
@@ -551,18 +605,22 @@ def batch_process_documents(
     job_name: Optional[str] = None,
 ) -> dict:
     """
-    Process all PDF documents in a directory.
-    Saves raw results to the internal database and job directory.
-    Returns a Job ID and summary to the agent.
+    Process all PDF documents in a directory using the fastest available method.
+
+    IMPORTANT: This tool automatically detects the PDF type:
+    - Typed/digital PDFs: Uses FAST text extraction (no OCR, free, instant)
+    - Scanned/image PDFs: Falls back to OCR (slower, uses AI model)
+
+    The return message will clearly indicate which method was used for each file.
 
     Args:
         directory_path: Directory containing PDF files to process
-        model: Qwen model to use (default: env QWEN_API_MODEL or qwen-vl-max)
-        dpi: DPI for scanning
-        job_name: Optional name/title for the job (e.g., "Fall 2025 Midterm").
+        model: Qwen model to use for OCR fallback (default: env QWEN_API_MODEL or qwen-vl-max)
+        dpi: DPI for OCR image conversion (default: 220, only used if OCR is needed)
+        job_name: Optional name/title for the job (e.g., "Fall 2025 Midterm")
 
     Returns:
-        Summary containing Job ID, counts, and the location of the output file.
+        Summary containing Job ID, counts, processing method breakdown, and output file location.
     """
     return _batch_process_documents_core(directory_path, model, dpi, job_name)
 
@@ -804,26 +862,89 @@ def _evaluate_job_core(
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a professional academic evaluator. Return your response in strictly valid JSON format.",
+                    "content": "You are a professional academic evaluator. Extract evaluation criteria and provide structured feedback according to the schema.",
                 },
                 {"role": "user", "content": prompt},
             ]
 
-            # Grok-beta/Grok-3 might not support JSON mode yet via OpenAI client, but we asked for it in prompt
-            response_format = (
-                {"type": "json_object"} if "grok" not in model.lower() else None
-            )
+            # Define JSON schema for structured outputs (Grok 4+ supports this!)
+            evaluation_schema = {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Criterion name from the rubric"},
+                                "score": {"type": ["string", "number"], "description": "Score for this criterion"},
+                                "feedback": {
+                                    "type": "object",
+                                    "properties": {
+                                        "examples": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Direct quotes from the essay"
+                                        },
+                                        "advice": {"type": "string", "description": "Actionable improvement advice"},
+                                        "rewritten_example": {"type": "string", "description": "Improved version of a quoted example"}
+                                    },
+                                    "required": ["examples", "advice", "rewritten_example"],
+                                    "additionalProperties": False
+                                }
+                            },
+                            "required": ["name", "score", "feedback"],
+                            "additionalProperties": False
+                        }
+                    },
+                    "overall_score": {"type": "string", "description": "Total score (e.g., '95', 'A', '18/20')"},
+                    "summary": {"type": "string", "description": "Brief overall assessment"}
+                },
+                "required": ["criteria", "overall_score", "summary"],
+                "additionalProperties": False
+            }
+
+            # Use structured outputs for all models (Grok 4+ and OpenAI both support json_schema)
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "essay_evaluation",
+                    "strict": True,  # Strongly enforce schema compliance
+                    "schema": evaluation_schema
+                }
+            }
 
             response = _call_chat_completion(
-                client, model, messages, response_format=response_format
+                client,
+                model,
+                messages,
+                response_format=response_format,
+                max_tokens=4000,      # Ensure complete responses for long evaluations
+                temperature=0.1       # Low temperature for deterministic, schema-following behavior
             )
             raw_eval_text = response.choices[0].message.content.strip()
 
             # 4. Extract and Validate JSON
+            # With structured outputs, the response should be valid JSON already
+            # but we still use extract_json_from_text as a safety net
             eval_data = extract_json_from_text(raw_eval_text)
             if not eval_data:
+                # Log the full response for debugging
+                print(
+                    f"[Evaluation-MCP] ERROR: Failed to parse JSON for essay {essay_id}. Full response:",
+                    file=sys.stderr
+                )
+                print(f"[Evaluation-MCP] {raw_eval_text}", file=sys.stderr)
+
+                # Save failed response to file for inspection
+                job_dir = JOB_MANAGER.get_job_directory(job_id)
+                error_file = job_dir / f"failed_eval_essay_{essay_id}.json"
+                with open(error_file, "w") as f:
+                    f.write(raw_eval_text)
+                print(f"[Evaluation-MCP] Saved failed response to {error_file}", file=sys.stderr)
+
                 raise ValueError(
-                    f"Failed to extract valid JSON from AI response: {raw_eval_text[:100]}..."
+                    f"Failed to extract valid JSON from AI response. Full response saved to {error_file}. Preview: {raw_eval_text[:200]}..."
                 )
 
             # Ensure we save the cleaned JSON back to string for DB
@@ -996,6 +1117,228 @@ def generate_student_feedback(job_id: str) -> dict:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@mcp.tool
+async def send_student_feedback_emails(
+    job_id: str,
+    subject: Optional[str] = None,
+    template_name: Optional[str] = "default_feedback",
+    dry_run: bool = False,
+    filter_students: Optional[Any] = None
+) -> dict:
+    """
+    Sends individual PDF feedback reports to students via email.
+
+    IMPORTANT: This sends real emails. Use dry_run=True to preview first.
+
+    The tool will:
+    1. Load student email addresses from school_names.csv
+    2. Find corresponding PDF feedback reports
+    3. Send personalized emails with PDF attachments
+    4. Log all sends/failures to email_log.jsonl
+
+    Idempotent: Re-running skips students who already received emails.
+
+    Args:
+        job_id: The ID of the graded job to send feedback for.
+        subject: Custom email subject (default: "Your Assignment Feedback - {assignment_name}").
+        template_name: Optional. Name of the email template. Defaults to 'default_feedback' if omitted or null. Do not provide if using default.
+        dry_run: If True, validates emails but doesn't send (default: False).
+        filter_students: Optional list of strings. Provide a standard JSON list of names (e.g. ["Name 1", "Name 2"]). Do NOT stringify the list unless absolutely necessary.
+
+    Returns:
+        Summary with count of sent/failed/skipped emails and path to log file.
+
+    Example:
+        # Preview what would be sent
+        send_student_feedback_emails(job_id="job_123", dry_run=True)
+
+        # Send to all students
+        send_student_feedback_emails(job_id="job_123")
+
+        # Send to specific students only
+        send_student_feedback_emails(job_id="job_123", filter_students=["John Doe", "Jane Smith"])
+    """
+    import json
+
+    # Handle agent quirks: explicit nulls or stringified lists
+    final_template = template_name if template_name else "default_feedback"
+    final_filter = None
+
+    if filter_students:
+        if isinstance(filter_students, str):
+            try:
+                # Try to parse string as JSON list
+                parsed = json.loads(filter_students)
+                if isinstance(parsed, list):
+                    final_filter = [str(x) for x in parsed]
+                else:
+                    # If it's just a single string name, wrap it
+                    final_filter = [filter_students]
+            except json.JSONDecodeError:
+                # Fallback: treat as single student name
+                final_filter = [filter_students]
+        elif isinstance(filter_students, list):
+            final_filter = [str(x) for x in filter_students]
+
+    try:
+        # Direct await since tool is now async
+        result = await EMAILER_TOOL.send_feedback_emails(
+            job_id=job_id,
+            subject_template=subject,
+            body_template=final_template,
+            dry_run=dry_run,
+            filter_students=final_filter
+        )
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool
+def identify_email_problems(job_id: str) -> dict:
+    """
+    Identifies students who cannot be emailed and why.
+
+    This is the FIRST STEP in preparing to email feedback reports. It checks
+    each student to see if they have a valid email in the roster and if their
+    PDF report was generated.
+
+    Use this before sending emails to identify students who need name corrections
+    or are missing email addresses.
+
+    Args:
+        job_id: The ID of the graded job to check.
+
+    Returns:
+        Dictionary with:
+        - status: "needs_corrections" if problems found, "ready" if all students OK
+        - students_needing_help: List of students with problems (name not found, no email, etc.)
+        - ready_to_send: Count of students ready to email
+        - total_students: Total number of students in job
+
+    Example:
+        result = identify_email_problems(job_id="job_123")
+        # Shows which students need teacher intervention before emailing
+    """
+    return NAME_FIXER_TOOL.identify_email_problems(job_id)
+
+
+@mcp.tool
+def verify_student_name_correction(
+    job_id: str,
+    essay_id: int,
+    suggested_name: str
+) -> dict:
+    """
+    Verifies that a suggested name correction exists in the roster.
+
+    This is the SECOND STEP after teacher provides a corrected student name.
+    Checks if the suggested name is valid and has an email address.
+
+    Use this after teacher suggests a corrected name for a student who couldn't
+    be matched. Shows the matched student info for teacher confirmation.
+
+    Args:
+        job_id: The ID of the graded job.
+        essay_id: The essay database ID to correct.
+        suggested_name: The corrected student name (e.g., "John Doe").
+
+    Returns:
+        Dictionary with:
+        - status: "match_found", "no_match", "no_email", or "no_exact_match"
+        - Match details if found (name, email, grade)
+        - Possible matches if no exact match
+        - needs_confirmation: True if match found and needs teacher confirmation
+
+    Example:
+        # Teacher says "Unknown Student 01" should be "John Doe"
+        result = verify_student_name_correction(
+            job_id="job_123",
+            essay_id=5,
+            suggested_name="John Doe"
+        )
+        # Returns: Found John Doe <john@example.com>, needs confirmation
+    """
+    return NAME_FIXER_TOOL.verify_student_name_correction(job_id, essay_id, suggested_name)
+
+
+@mcp.tool
+def apply_student_name_correction(
+    job_id: str,
+    essay_id: int,
+    confirmed_name: str
+) -> dict:
+    """
+    Applies a confirmed name correction to the database.
+
+    This is the THIRD STEP after teacher confirms the name match is correct.
+    Updates the student_name field in the database WITHOUT re-grading the essay.
+
+    Use this after verify_student_name_correction returns a match and teacher
+    confirms it's correct. The grade and evaluation are preserved.
+
+    Args:
+        job_id: The ID of the graded job.
+        essay_id: The essay database ID to update.
+        confirmed_name: The confirmed correct student name.
+
+    Returns:
+        Dictionary with:
+        - status: "success" or "error"
+        - old_name: Previous name in database
+        - new_name: Updated name
+        - email: Student's email address
+
+    Example:
+        # Teacher confirms "John Doe" is correct
+        result = apply_student_name_correction(
+            job_id="job_123",
+            essay_id=5,
+            confirmed_name="John Doe"
+        )
+        # Updates database: "Unknown Student 01" → "John Doe"
+    """
+    return NAME_FIXER_TOOL.apply_student_name_correction(job_id, essay_id, confirmed_name)
+
+
+@mcp.tool
+def skip_student_email(
+    job_id: str,
+    essay_id: int,
+    reason: str = "Manual delivery"
+) -> dict:
+    """
+    Marks a student to skip for email delivery (manual delivery instead).
+
+    Use this when teacher cannot identify the student or wants to deliver the
+    feedback manually. The student will be excluded from email sending.
+
+    The PDF report is still available in the feedback_pdfs directory for manual
+    delivery.
+
+    Args:
+        job_id: The ID of the graded job.
+        essay_id: The essay database ID to skip.
+        reason: Reason for skipping (default: "Manual delivery").
+
+    Returns:
+        Dictionary with:
+        - status: "success"
+        - essay_id: The skipped essay ID
+        - student_name: Current name in database
+        - reason: Why it's being skipped
+
+    Example:
+        # Teacher can't identify student, will deliver manually
+        result = skip_student_email(
+            job_id="job_123",
+            essay_id=5,
+            reason="Unable to identify student"
+        )
+    """
+    return NAME_FIXER_TOOL.skip_student_email(job_id, essay_id, reason)
 
 
 @mcp.tool

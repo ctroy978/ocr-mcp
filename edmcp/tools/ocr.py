@@ -176,12 +176,22 @@ class OCRTool:
         pdf_path: Union[str, Path],
         dpi: int = 220,
         unknown_prefix: str = "Unknown Student",
-    ) -> Path:
+    ) -> dict:
+        """
+        Process a PDF file and return processing results with metadata.
+
+        Returns:
+            dict with keys:
+                - output_path: Path to JSONL results
+                - used_ocr: bool indicating if OCR was used
+                - student_count: number of students found
+        """
         if self.job_dir is None:
             raise ValueError("job_dir is required for process_pdf")
 
         pdf_path = Path(pdf_path)
         page_results = []
+        used_ocr = False
 
         # Try text extraction first (fast, free)
         extracted_texts = self.extract_text_from_pdf(pdf_path)
@@ -199,6 +209,7 @@ class OCRTool:
                 )
         else:
             # Text extraction failed, fall back to OCR (slow, expensive)
+            used_ocr = True
             print(f"[OCR] {pdf_path.name}: Using OCR for scanned/image PDF", file=sys.stderr)
             images = convert_from_path(str(pdf_path), dpi=dpi)
 
@@ -233,7 +244,11 @@ class OCRTool:
                     metadata=record["metadata"],
                 )
 
-        return output_path
+        return {
+            "output_path": output_path,
+            "used_ocr": used_ocr,
+            "student_count": len(aggregates),
+        }
 
     def _aggregate_pages(
         self, pages: List[PageResult], unknown_prefix: str
