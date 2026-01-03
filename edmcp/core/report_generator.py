@@ -18,7 +18,7 @@ class ReportGenerator:
     """
 
     def __init__(self, output_base_dir: str = "data/reports", db_manager=None):
-        self.output_base_dir = Path(output_base_dir)
+        self.output_base_dir = Path(output_base_dir).resolve()  # Convert to absolute path
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self.styles = getSampleStyleSheet()
         self.db_manager = db_manager
@@ -70,7 +70,19 @@ class ReportGenerator:
 
                 writer.writerow(row)
 
-        return str(csv_path)
+        # Store CSV in database if db_manager is available
+        if self.db_manager:
+            with open(csv_path, 'rb') as f:
+                csv_content = f.read()
+            self.db_manager.store_report(
+                job_id=job_id,
+                report_type='gradebook_csv',
+                filename=f"{job_id}_gradebook.csv",
+                content=csv_content,
+                essay_id=None
+            )
+
+        return str(csv_path.resolve())
 
     def generate_student_feedback_pdfs(self, job_id: str, essays: List[Dict[str, Any]]) -> str:
         """
@@ -102,21 +114,36 @@ class ReportGenerator:
                     essay_id=essay_id
                 )
 
-        return str(pdf_dir)
+        return str(pdf_dir.resolve())
 
-    def zip_directory(self, dir_path: str, zip_name: str) -> str:
+    def zip_directory(self, dir_path: str, zip_name: str, job_id: str = None) -> str:
         """
         Zips a directory and returns the path to the ZIP file.
+        Optionally stores in database if job_id and db_manager are provided.
         """
         dir_to_zip = Path(dir_path)
         if not dir_to_zip.exists():
             return ""
-            
+
         # create_archive adds .zip extension automatically
         zip_base_path = dir_to_zip.parent / zip_name
         shutil.make_archive(str(zip_base_path), 'zip', str(dir_to_zip))
-        
-        return str(zip_base_path) + ".zip"
+
+        zip_path = Path(str(zip_base_path) + ".zip")
+
+        # Store ZIP in database if db_manager and job_id are available
+        if self.db_manager and job_id:
+            with open(zip_path, 'rb') as f:
+                zip_content = f.read()
+            self.db_manager.store_report(
+                job_id=job_id,
+                report_type='student_feedback_zip',
+                filename=zip_path.name,
+                content=zip_content,
+                essay_id=None
+            )
+
+        return str(zip_path.resolve())
 
     def _parse_evaluation(self, eval_json: Any) -> Dict[str, Any]:
         if not eval_json:

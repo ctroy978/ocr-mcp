@@ -1082,7 +1082,7 @@ def generate_gradebook(job_id: str) -> dict:
         return {
             "status": "success",
             "job_id": job_id,
-            "csv_path": str(Path(csv_path).absolute()),  # Return absolute path
+            "csv_path": csv_path,  # Already absolute from ReportGenerator
             "message": f"Gradebook generated at {csv_path}",
         }
     except Exception as e:
@@ -1107,18 +1107,103 @@ def generate_student_feedback(job_id: str) -> dict:
 
         pdf_dir = REPORT_GENERATOR.generate_student_feedback_pdfs(job_id, essays)
 
-        # Zip the directory for easy download
-        zip_path = REPORT_GENERATOR.zip_directory(pdf_dir, f"{job_id}_student_feedback")
+        # Zip the directory for easy download (now stores in DB too)
+        zip_path = REPORT_GENERATOR.zip_directory(pdf_dir, f"{job_id}_student_feedback", job_id=job_id)
 
         return {
             "status": "success",
             "job_id": job_id,
-            "pdf_directory": str(Path(pdf_dir).absolute()),  # Return absolute path
-            "zip_path": str(Path(zip_path).absolute()),      # Return absolute path
+            "pdf_directory": pdf_dir,  # Already absolute from ReportGenerator
+            "zip_path": zip_path,      # Already absolute from ReportGenerator
             "message": f"Individual feedback PDFs generated and zipped at {zip_path}",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@mcp.tool
+def get_report_file(job_id: str, report_type: str, essay_id: Optional[int] = None) -> dict:
+    """
+    Retrieve a report file from the database.
+
+    This is a general-purpose tool for retrieving any report generated during grading.
+    All reports are stored in the database for persistence and can be retrieved
+    regardless of where the MCP server or agent are running.
+
+    Args:
+        job_id: The job ID for the report
+        report_type: Type of report to retrieve. Valid options:
+            - 'gradebook_csv': The CSV gradebook for the entire job
+            - 'student_feedback_zip': ZIP file containing all student feedback PDFs
+            - 'student_pdf': Individual student feedback PDF (requires essay_id)
+        essay_id: Required only for 'student_pdf' report_type. The essay ID for the student.
+
+    Returns:
+        Dictionary with:
+            - status: "success" or "error"
+            - filename: Original filename
+            - content_base64: Base64-encoded file content (decode to get binary)
+            - size_bytes: File size in bytes
+            - created_at: When the report was generated
+            - message: Human-readable message
+
+    Examples:
+        # Get gradebook CSV
+        get_report_file(job_id="job_123", report_type="gradebook_csv")
+
+        # Get student feedback ZIP
+        get_report_file(job_id="job_123", report_type="student_feedback_zip")
+
+        # Get individual student PDF
+        get_report_file(job_id="job_123", report_type="student_pdf", essay_id=5)
+    """
+    try:
+        import base64
+
+        # Validate report_type
+        valid_types = ['gradebook_csv', 'student_feedback_zip', 'student_pdf']
+        if report_type not in valid_types:
+            return {
+                "status": "error",
+                "message": f"Invalid report_type '{report_type}'. Must be one of: {', '.join(valid_types)}"
+            }
+
+        # For student_pdf, essay_id is required
+        if report_type == 'student_pdf' and essay_id is None:
+            return {
+                "status": "error",
+                "message": "essay_id is required when report_type is 'student_pdf'"
+            }
+
+        # Retrieve report from database
+        report = DB_MANAGER.get_report_with_metadata(job_id, report_type, essay_id)
+
+        if not report:
+            not_found_msg = f"No {report_type} report found for job {job_id}"
+            if essay_id:
+                not_found_msg += f" and essay {essay_id}"
+            return {
+                "status": "error",
+                "message": not_found_msg
+            }
+
+        # Encode content as base64 for safe JSON transport
+        content_base64 = base64.b64encode(report['content']).decode('utf-8')
+
+        return {
+            "status": "success",
+            "filename": report['filename'],
+            "content_base64": content_base64,
+            "size_bytes": len(report['content']),
+            "created_at": report['created_at'],
+            "message": f"Successfully retrieved {report['filename']} ({len(report['content'])} bytes)"
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error retrieving report: {str(e)}"
+        }
 
 
 @mcp.tool
@@ -1341,6 +1426,67 @@ def skip_student_email(
         )
     """
     return NAME_FIXER_TOOL.skip_student_email(job_id, essay_id, reason)
+
+
+@mcp.tool
+def get_email_log(job_id: str) -> dict:
+    """
+    Retrieves the email delivery log for a completed job.
+    Shows which students received emails, which failed, and which were skipped.
+
+    Args:
+        job_id: The job ID from the grading process.
+
+    Returns:
+        Dictionary with lists of sent, failed, and skipped emails.
+
+    Example:
+        get_email_log("job_20260102_143022")
+    """
+    import json
+    from pathlib import Path
+
+    log_path = Path(f"data/reports/{job_id}/email_log.jsonl")
+
+    if not log_path.exists():
+        return {
+            "error": f"No email log found for job_id={job_id}",
+            "sent": [],
+            "failed": [],
+            "skipped": []
+        }
+
+    sent = []
+    failed = []
+    skipped = []
+
+    with open(log_path) as f:
+        for line in f:
+            record = json.loads(line)
+            entry = {
+                "student_name": record.get("student_name"),
+                "email": record.get("email"),
+                "timestamp": record.get("timestamp"),
+            }
+
+            if record["status"] == "SENT":
+                sent.append(entry)
+            elif record["status"] == "FAILED":
+                entry["error"] = record.get("error")
+                failed.append(entry)
+            elif record["status"] == "SKIPPED":
+                entry["reason"] = record.get("reason")
+                skipped.append(entry)
+
+    return {
+        "job_id": job_id,
+        "total_sent": len(sent),
+        "total_failed": len(failed),
+        "total_skipped": len(skipped),
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped
+    }
 
 
 @mcp.tool

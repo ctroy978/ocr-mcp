@@ -16,3 +16,13 @@ wheels/
 batchocr
 .coverage
 edmcp/data/names/
+
+# Job processing and report data
+data/jobs/
+data/reports/
+data/processed.db
+data/vector_store/
+
+# Database files
+edmcp.db
+*.db

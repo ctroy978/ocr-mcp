@@ -393,6 +393,57 @@ class DatabaseManager:
         row = cursor.fetchone()
         return row["content"] if row else None
 
+    def get_report_with_metadata(
+        self, job_id: str, report_type: str, essay_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a report with full metadata (filename, content, timestamps).
+
+        Args:
+            job_id: The job ID
+            report_type: Type of report ('gradebook_csv', 'student_feedback_zip', 'student_pdf')
+            essay_id: Optional essay ID for per-student reports
+
+        Returns:
+            Dict with keys: id, job_id, report_type, essay_id, filename, content, created_at
+            or None if not found
+        """
+        cursor = self.conn.cursor()
+        if essay_id is not None:
+            cursor.execute(
+                """
+                SELECT id, job_id, report_type, essay_id, filename, content, created_at
+                FROM reports
+                WHERE job_id = ? AND report_type = ? AND essay_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (job_id, report_type, essay_id),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, job_id, report_type, essay_id, filename, content, created_at
+                FROM reports
+                WHERE job_id = ? AND report_type = ? AND essay_id IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (job_id, report_type),
+            )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "id": row["id"],
+                "job_id": row["job_id"],
+                "report_type": row["report_type"],
+                "essay_id": row["essay_id"],
+                "filename": row["filename"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+            }
+        return None
+
     def delete_job_reports(self, job_id: str) -> int:
         """
         Deletes all reports associated with a job.
