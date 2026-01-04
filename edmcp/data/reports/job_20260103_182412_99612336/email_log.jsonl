@@ -1,0 +1,4 @@
+{"student_name": "Pfour six", "email": "ctroy978@gmail.com", "status": "FAILED", "error": "SMTP send failed", "timestamp": "2026-01-04T02:46:26.482096Z"}
+{"student_name": "pfour seven", "email": "ctroy978@gmail.com", "status": "FAILED", "error": "SMTP send failed", "timestamp": "2026-01-04T02:46:26.486566Z"}
+{"student_name": "Pfour six", "email": "ctroy978@gmail.com", "status": "SENT", "timestamp": "2026-01-04T02:46:51.864653Z"}
+{"student_name": "pfour seven", "email": "ctroy978@gmail.com", "status": "SENT", "timestamp": "2026-01-04T02:46:52.548143Z"}

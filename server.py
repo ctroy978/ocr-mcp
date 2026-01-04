@@ -1222,6 +1222,7 @@ def download_reports_locally(job_id: str) -> dict:
     Returns:
         Dictionary with:
             - status: "success" or "error"
+            - job_id: The job ID (same as input, for easy reference)
             - gradebook_path: Local path to CSV gradebook
             - feedback_zip_path: Local path to student feedback ZIP
             - message: Human-readable message
@@ -1232,6 +1233,7 @@ def download_reports_locally(job_id: str) -> dict:
         Returns:
         {
             "status": "success",
+            "job_id": "job_20260103_061455_5517d0a1",
             "gradebook_path": "/tmp/job_20260103_061455_5517d0a1_gradebook.csv",
             "feedback_zip_path": "/tmp/job_20260103_061455_5517d0a1_student_feedback.zip",
             "message": "Reports downloaded successfully to local temp directory"
@@ -1274,6 +1276,7 @@ def download_reports_locally(job_id: str) -> dict:
 
         return {
             "status": "success",
+            "job_id": job_id,
             "gradebook_path": str(gradebook_path.absolute()),
             "feedback_zip_path": str(zip_path.absolute()),
             "message": f"Reports downloaded successfully to {temp_dir}"

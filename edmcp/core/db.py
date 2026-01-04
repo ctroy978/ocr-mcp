@@ -172,6 +172,16 @@ class DatabaseManager:
         )
         self.conn.commit()
 
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves job information by job_id."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        row = cursor.fetchone()
+
+        if row:
+            return dict(row)
+        return None
+
     def get_job_essays(self, job_id: str) -> List[Dict[str, Any]]:
         """Retrieves all essays for a specific job."""
         cursor = self.conn.cursor()
