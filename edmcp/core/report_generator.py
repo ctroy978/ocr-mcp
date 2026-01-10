@@ -184,9 +184,15 @@ class ReportGenerator:
             
             for crit in eval_data['criteria']:
                 elements.append(Paragraph(f"<b>{crit.get('name', 'Criterion')}: {crit.get('score', 'N/A')}</b>", self.styles['Heading3']))
-                
+
                 feedback = crit.get('feedback', {})
                 if isinstance(feedback, dict):
+                    # Justification (why this score was given)
+                    justification = feedback.get('justification')
+                    if justification:
+                        elements.append(Paragraph(justification, self.styles['Normal']))
+                        elements.append(Spacer(1, 6))
+
                     # Examples/Quotes
                     quotes = feedback.get('examples', [])
                     if quotes:

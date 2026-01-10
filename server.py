@@ -1136,6 +1136,7 @@ def _evaluate_job_core(
                                 "feedback": {
                                     "type": "object",
                                     "properties": {
+                                        "justification": {"type": "string", "description": "1-2 sentence explanation of why this score was assigned"},
                                         "examples": {
                                             "type": "array",
                                             "items": {"type": "string"},
@@ -1144,7 +1145,7 @@ def _evaluate_job_core(
                                         "advice": {"type": "string", "description": "Actionable improvement advice"},
                                         "rewritten_example": {"type": "string", "description": "Improved version of a quoted example"}
                                     },
-                                    "required": ["examples", "advice", "rewritten_example"],
+                                    "required": ["justification", "examples", "advice", "rewritten_example"],
                                     "additionalProperties": False
                                 }
                             },

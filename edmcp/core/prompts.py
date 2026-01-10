@@ -34,9 +34,10 @@ Evaluate the student's essay strictly according to the provided grading rubric. 
 For each criterion:
 - Assign a score based on the points specified in the rubric.
 - Provide feedback in this exact format:
-  1. Specific examples: Quote 1-3 direct examples from the essay that justify the score.
-  2. Advice on improvement: Give 1-2 actionable suggestions.
-  3. Rewritten example: Provide a rewritten version of one of the quoted examples.
+  1. Justification: A 1-2 sentence explanation of WHY this score was assigned (explain what was done well or what was lacking).
+  2. Specific examples: Quote 1-3 direct examples from the essay that justify the score.
+  3. Advice on improvement: Give 1-2 actionable suggestions.
+  4. Rewritten example: Provide a rewritten version of one of the quoted examples.
 
 You must output ONLY a valid JSON object. The JSON must follow this exact structure:
 
@@ -46,6 +47,7 @@ You must output ONLY a valid JSON object. The JSON must follow this exact struct
       "name": "Criterion Name",
       "score": "Numeric score or letter grade",
       "feedback": {{
+        "justification": "Brief explanation of why this score was given",
         "examples": ["quote 1", "quote 2"],
         "advice": "Actionable advice string",
         "rewritten_example": "Improved version string"
