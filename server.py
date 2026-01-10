@@ -439,6 +439,53 @@ def _process_pdf_core(
 
 
 @mcp.tool
+def create_job_with_materials(
+    job_name: str,
+    rubric: str,
+    question_text: Optional[str] = None,
+    essay_format: Optional[str] = None,
+    student_count: Optional[int] = None,
+    knowledge_base_topic: Optional[str] = None,
+) -> dict:
+    """
+    Creates a new grading job and stores all materials (rubric, question, metadata) in the database.
+    This is the first step in the grading workflow - call this before batch_process_documents.
+
+    Args:
+        job_name: Name for this grading job (e.g., "WR121 Essays")
+        rubric: The complete grading rubric text
+        question_text: The essay question/prompt (optional)
+        essay_format: Either "handwritten" or "typed" (optional, MCP will auto-detect)
+        student_count: Expected number of students (optional, for verification)
+        knowledge_base_topic: Topic name if reading materials were added to knowledge base (optional)
+
+    Returns:
+        Dictionary with job_id and confirmation message
+    """
+    try:
+        job_id = JOB_MANAGER.create_job(
+            job_name=job_name,
+            rubric=rubric,
+            question_text=question_text,
+            essay_format=essay_format,
+            student_count=student_count,
+            knowledge_base_topic=knowledge_base_topic,
+        )
+
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "job_name": job_name,
+            "essay_format": essay_format,
+            "student_count": student_count,
+            "knowledge_base_topic": knowledge_base_topic,
+            "message": f"✓ Job created: {job_id}. Materials stored in database. Ready for essay processing.",
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool
 def process_pdf_document(
     pdf_path: str,
     dpi: int = 220,
@@ -511,14 +558,23 @@ def _batch_process_documents_core(
     model: Optional[str] = None,
     dpi: int = 220,
     job_name: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> dict:
     """Core logic for batch processing documents."""
     input_path = Path(directory_path)
     if not input_path.exists():
         return {"status": "error", "message": f"Directory not found: {directory_path}"}
 
-    # Generate a unique Job ID via JobManager (creates DB record and directory)
-    job_id = JOB_MANAGER.create_job(job_name=job_name)
+    # Use existing job_id if provided, otherwise create a new job
+    if job_id:
+        # Verify job exists
+        job_info = DB_MANAGER.get_job(job_id)
+        if not job_info:
+            return {"status": "error", "message": f"Job not found: {job_id}"}
+    else:
+        # Generate a unique Job ID via JobManager (creates DB record and directory)
+        job_id = JOB_MANAGER.create_job(job_name=job_name)
+
     job_dir = JOB_MANAGER.get_job_directory(job_id)
 
     # Internal output file (always created by OCRTool)
@@ -604,6 +660,7 @@ def batch_process_documents(
     model: Optional[str] = None,
     dpi: int = 220,
     job_name: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> dict:
     """
     Process all PDF documents in a directory using the fastest available method.
@@ -618,12 +675,13 @@ def batch_process_documents(
         directory_path: Directory containing PDF files to process
         model: Qwen model to use for OCR fallback (default: env QWEN_API_MODEL or qwen-vl-max)
         dpi: DPI for OCR image conversion (default: 220, only used if OCR is needed)
-        job_name: Optional name/title for the job (e.g., "Fall 2025 Midterm")
+        job_name: Optional name/title for the job (e.g., "Fall 2025 Midterm"). Ignored if job_id is provided.
+        job_id: Optional existing job ID to add essays to (from create_job_with_materials). If not provided, creates a new job.
 
     Returns:
         Summary containing Job ID, counts, processing method breakdown, and output file location.
     """
-    return _batch_process_documents_core(directory_path, model, dpi, job_name)
+    return _batch_process_documents_core(directory_path, model, dpi, job_name, job_id)
 
 
 def _get_job_statistics_core(job_id: str) -> dict:
@@ -723,6 +781,193 @@ def scrub_processed_job(job_id: str) -> dict:
     return _scrub_processed_job_core(job_id)
 
 
+@mcp.tool
+def validate_student_names(job_id: str) -> dict:
+    """
+    Validates detected student names against the school roster CSV.
+
+    This tool should be called AFTER get_job_statistics and BEFORE scrubbing.
+    It identifies name mismatches that need correction before grading begins.
+
+    Args:
+        job_id: The ID of the job to validate.
+
+    Returns:
+        Dictionary with:
+        - status: "needs_corrections" if mismatches found, "validated" if all names match
+        - matched_students: List of students whose names match the roster
+        - mismatched_students: List of students NOT in roster (need correction)
+        - missing_students: List of roster students with no essay found
+        - total_detected: Total number of essays processed
+
+    Example:
+        result = validate_student_names("job_123")
+        # Shows "pfour seven" is not in roster, needs correction
+    """
+    essays = DB_MANAGER.get_job_essays(job_id)
+
+    if not essays:
+        return {
+            "status": "error",
+            "message": f"No essays found for job {job_id}"
+        }
+
+    # Get all detected names from essays
+    detected_names = {essay.get("student_name", "Unknown"): essay.get("id") for essay in essays}
+
+    # Get all roster students
+    all_students = STUDENT_ROSTER_WITH_EMAILS.get_all_students()
+    roster_names = set(all_students.keys())
+
+    matched = []
+    mismatched = []
+
+    for detected_name, essay_id in detected_names.items():
+        # Try exact match (case-insensitive)
+        student_info = STUDENT_ROSTER_WITH_EMAILS.get_student_info(detected_name)
+
+        if student_info:
+            # Found exact match
+            matched.append({
+                "essay_id": essay_id,
+                "detected_name": detected_name,
+                "roster_name": student_info.full_name,
+                "email": student_info.email,
+                "grade": student_info.grade
+            })
+        else:
+            # No match found - needs correction
+            mismatched.append({
+                "essay_id": essay_id,
+                "detected_name": detected_name,
+                "reason": "Name not found in school roster (possible OCR error or typo)"
+            })
+
+    # Find missing students (in roster but no essay)
+    detected_names_lower = {name.lower() for name in detected_names.keys()}
+    missing = []
+
+    for roster_name, student_info in all_students.items():
+        if roster_name.lower() not in detected_names_lower:
+            missing.append({
+                "roster_name": student_info.full_name,
+                "email": student_info.email,
+                "grade": student_info.grade
+            })
+
+    return {
+        "status": "needs_corrections" if mismatched else "validated",
+        "matched_students": matched,
+        "mismatched_students": mismatched,
+        "missing_students": missing,
+        "total_detected": len(essays),
+        "total_matched": len(matched),
+        "total_mismatched": len(mismatched),
+        "total_missing": len(missing),
+        "message": f"Found {len(mismatched)} name(s) that need correction" if mismatched else "All student names validated successfully"
+    }
+
+
+@mcp.tool
+def correct_detected_name(job_id: str, essay_id: int, corrected_name: str) -> dict:
+    """
+    Corrects a student name in the database BEFORE grading begins.
+
+    This is for fixing OCR errors or typos detected during the inspection phase.
+    Use this after validate_student_names identifies mismatches.
+
+    Args:
+        job_id: The ID of the job.
+        essay_id: The essay database ID to correct.
+        corrected_name: The corrected student name (must exist in school roster).
+
+    Returns:
+        Dictionary with:
+        - status: "success", "not_in_roster", or "error"
+        - essay_id: The corrected essay ID
+        - old_name: Previous detected name
+        - new_name: Corrected name from roster
+        - email: Student's email address
+        - reminder: Note to update school_names.csv if needed
+
+    Example:
+        # Fix "pfour seven" -> "Peter Seven"
+        result = correct_detected_name(
+            job_id="job_123",
+            essay_id=5,
+            corrected_name="Peter Seven"
+        )
+    """
+    # Verify the corrected name exists in roster
+    student_info = STUDENT_ROSTER_WITH_EMAILS.get_student_info(corrected_name)
+
+    if not student_info:
+        # Try to find partial matches
+        all_students = STUDENT_ROSTER_WITH_EMAILS.get_all_students()
+        corrected_lower = corrected_name.lower()
+
+        possible_matches = [
+            (name, info) for name, info in all_students.items()
+            if corrected_lower in name.lower() or name.lower() in corrected_lower
+        ]
+
+        if possible_matches:
+            return {
+                "status": "not_in_roster",
+                "message": f"'{corrected_name}' not found in roster. Did you mean one of these?",
+                "possible_matches": [
+                    {
+                        "name": info.full_name,
+                        "email": info.email,
+                        "grade": info.grade
+                    }
+                    for name, info in possible_matches[:5]
+                ]
+            }
+        else:
+            return {
+                "status": "not_in_roster",
+                "message": f"'{corrected_name}' not found in school roster. Please check the spelling or add this student to school_names.csv"
+            }
+
+    # Get current essay info
+    essays = DB_MANAGER.get_job_essays(job_id)
+    essay = next((e for e in essays if e.get("id") == essay_id), None)
+
+    if not essay:
+        return {
+            "status": "error",
+            "message": f"Essay {essay_id} not found in job {job_id}"
+        }
+
+    old_name = essay.get("student_name", "Unknown")
+
+    # Update the database with corrected name
+    try:
+        cursor = DB_MANAGER.conn.cursor()
+        cursor.execute(
+            "UPDATE essays SET student_name = ? WHERE id = ?",
+            (student_info.full_name, essay_id)
+        )
+        DB_MANAGER.conn.commit()
+
+        return {
+            "status": "success",
+            "essay_id": essay_id,
+            "old_name": old_name,
+            "new_name": student_info.full_name,
+            "email": student_info.email,
+            "grade": student_info.grade,
+            "reminder": f"⚠️ REMINDER: If '{old_name}' was detected from the essay header, consider updating school_names.csv to include the correct spelling to prevent future OCR issues.",
+            "message": f"Successfully corrected essay {essay_id} from '{old_name}' to '{student_info.full_name}'"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Database update failed: {str(e)}"
+        }
+
+
 def _normalize_processed_job_core(job_id: str, model: Optional[str] = None) -> dict:
     """Core logic for normalizing text in a job using xAI."""
     print(f"[Cleanup-MCP] Normalizing Job {job_id}...", file=sys.stderr)
@@ -812,6 +1057,18 @@ def _evaluate_job_core(
 ) -> dict:
     """Core logic for evaluating essays in a job."""
     print(f"[Evaluation-MCP] Evaluating Job {job_id}...", file=sys.stderr)
+
+    # Look up rubric from database if not provided
+    if not rubric:
+        job_info = DB_MANAGER.get_job(job_id)
+        if not job_info:
+            return {"status": "error", "message": f"Job not found: {job_id}"}
+
+        rubric = job_info.get("rubric")
+        if not rubric:
+            return {"status": "error", "message": f"No rubric found in database for job {job_id}. Please provide rubric parameter or create job with create_job_with_materials."}
+
+        print(f"[Evaluation-MCP] Using rubric from database for job {job_id}", file=sys.stderr)
 
     # Resolve model
     model = (
@@ -983,8 +1240,8 @@ def _evaluate_job_core(
 @mcp.tool
 def evaluate_job(
     job_id: str,
-    rubric: str,
-    context_material: str,
+    rubric: Optional[str] = None,
+    context_material: str = "",
     model: Optional[str] = None,
     system_instructions: Optional[str] = None,
 ) -> dict:
@@ -994,8 +1251,8 @@ def evaluate_job(
 
     Args:
         job_id: The ID of the job to evaluate.
-        rubric: The grading criteria text.
-        context_material: The source material or answer key context.
+        rubric: The grading criteria text. If not provided, will use rubric stored in database from create_job_with_materials.
+        context_material: The source material or answer key context (optional, defaults to empty string).
         model: The AI model to use (default: env EVALUATION_API_MODEL or grok-beta).
         system_instructions: Optional custom instructions for the AI evaluator.
 
@@ -1003,7 +1260,7 @@ def evaluate_job(
         Summary of evaluation operation.
     """
     return _evaluate_job_core(
-        job_id, rubric, context_material, model, system_instructions
+        job_id, rubric or "", context_material, model, system_instructions
     )
 
 
@@ -1634,14 +1891,20 @@ def convert_pdf_to_text(
         use_ocr: If True, uses OCR for scanned PDFs (slower but works with images)
 
     Returns:
-        Dictionary with status and path to the text file.
+        Dictionary with status, path to the text file, AND the actual text content.
     """
     try:
         txt_path = CONVERTER.convert_pdf_to_text(file_path, output_path, use_ocr)
+
+        # Read the text content to return to agent
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            text_content = f.read()
+
         return {
             "status": "success",
             "input_file": file_path,
             "output_file": str(txt_path),
+            "text_content": text_content,  # ← Agent can use this directly
             "message": f"Successfully converted to text: {txt_path}",
             "used_ocr": use_ocr,
         }
@@ -1651,6 +1914,42 @@ def convert_pdf_to_text(
             "input_file": file_path,
             "error": str(e),
             "suggestion": "If the PDF is scanned/image-based, try setting use_ocr=True",
+        }
+
+
+@mcp.tool
+def read_text_file(file_path: str) -> dict:
+    """
+    Reads a plain text file (.txt, .md, etc.) and returns its contents.
+    Use this for rubrics, questions, or other materials provided as text files.
+
+    Args:
+        file_path: Path to the text file
+
+    Returns:
+        Dictionary with status and text content
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text_content = f.read()
+
+        return {
+            "status": "success",
+            "file_path": file_path,
+            "text_content": text_content,
+            "message": f"Successfully read text file: {file_path}",
+        }
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "file_path": file_path,
+            "error": f"File not found: {file_path}",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "file_path": file_path,
+            "error": str(e),
         }
 
 
