@@ -440,8 +440,8 @@ def _process_pdf_core(
 
 @mcp.tool
 def create_job_with_materials(
-    job_name: str,
     rubric: str,
+    job_name: Optional[str] = None,
     question_text: Optional[str] = None,
     essay_format: Optional[str] = None,
     student_count: Optional[int] = None,
@@ -452,11 +452,11 @@ def create_job_with_materials(
     This is the first step in the grading workflow - call this before batch_process_documents.
 
     Args:
-        job_name: Name for this grading job (e.g., "WR121 Essays")
         rubric: The complete grading rubric text
+        job_name: Optional name for this grading job (e.g., "WR121 Essays"). If not provided, auto-generated from timestamp.
         question_text: The essay question/prompt (optional)
         essay_format: Either "handwritten" or "typed" (optional, MCP will auto-detect)
-        student_count: Expected number of students (optional, for verification)
+        student_count: Expected number of students (optional, for verification - NOT NEEDED since OCR auto-detects)
         knowledge_base_topic: Topic name if reading materials were added to knowledge base (optional)
 
     Returns:
@@ -643,6 +643,7 @@ def _batch_process_documents_core(
         "status": "success",
         "job_id": job_id,
         "job_name": job_name,
+        "students_detected": students_found,
         "summary": f"Processed {files_processed} files ({method_str}). Found {students_found} student records. Run `get_job_statistics` to inspect manifest, or `scrub_processed_job` to proceed.",
         "processing_details": {
             "total_files": files_processed,
@@ -797,12 +798,18 @@ def validate_student_names(job_id: str) -> dict:
         - status: "needs_corrections" if mismatches found, "validated" if all names match
         - matched_students: List of students whose names match the roster
         - mismatched_students: List of students NOT in roster (need correction)
+          Each mismatched student includes:
+            - essay_id: Database ID of the essay
+            - detected_name: Name that was detected (possibly incorrect)
+            - essay_preview: First 300 chars of essay text to help identify which essay
+            - reason: Explanation of why it didn't match
         - total_detected: Total number of essays processed
         - total_missing: Count of roster students with no essay (not a detailed list)
 
     Example:
         result = validate_student_names("job_123")
         # Shows "pfour seven" is not in roster, needs correction
+        # Includes essay preview so teacher can identify which physical essay it is
         # Shows total_missing: 10 (but doesn't list all 10 names)
     """
     essays = DB_MANAGER.get_job_essays(job_id)
@@ -812,6 +819,9 @@ def validate_student_names(job_id: str) -> dict:
             "status": "error",
             "message": f"No essays found for job {job_id}"
         }
+
+    # Build a mapping of essay_id to essay object for quick lookup
+    essays_by_id = {essay.get("id"): essay for essay in essays}
 
     # Get all detected names from essays
     detected_names = {essay.get("student_name", "Unknown"): essay.get("id") for essay in essays}
@@ -838,9 +848,19 @@ def validate_student_names(job_id: str) -> dict:
             })
         else:
             # No match found - needs correction
+            # Get essay preview (first 300 chars of raw_text)
+            essay = essays_by_id.get(essay_id, {})
+            raw_text = essay.get("raw_text", "")
+            preview = raw_text[:300].strip() if raw_text else "(No text available)"
+
+            # Add ellipsis if text was truncated
+            if len(raw_text) > 300:
+                preview += "..."
+
             mismatched.append({
                 "essay_id": essay_id,
                 "detected_name": detected_name,
+                "essay_preview": preview,
                 "reason": "Name not found in school roster (possible OCR error or typo)"
             })
 
