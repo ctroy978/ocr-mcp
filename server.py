@@ -797,12 +797,13 @@ def validate_student_names(job_id: str) -> dict:
         - status: "needs_corrections" if mismatches found, "validated" if all names match
         - matched_students: List of students whose names match the roster
         - mismatched_students: List of students NOT in roster (need correction)
-        - missing_students: List of roster students with no essay found
         - total_detected: Total number of essays processed
+        - total_missing: Count of roster students with no essay (not a detailed list)
 
     Example:
         result = validate_student_names("job_123")
         # Shows "pfour seven" is not in roster, needs correction
+        # Shows total_missing: 10 (but doesn't list all 10 names)
     """
     essays = DB_MANAGER.get_job_essays(job_id)
 
@@ -843,27 +844,22 @@ def validate_student_names(job_id: str) -> dict:
                 "reason": "Name not found in school roster (possible OCR error or typo)"
             })
 
-    # Find missing students (in roster but no essay)
+    # Count missing students (in roster but no essay) - don't build detailed list
     detected_names_lower = {name.lower() for name in detected_names.keys()}
-    missing = []
+    missing_count = 0
 
-    for roster_name, student_info in all_students.items():
+    for roster_name in all_students.keys():
         if roster_name.lower() not in detected_names_lower:
-            missing.append({
-                "roster_name": student_info.full_name,
-                "email": student_info.email,
-                "grade": student_info.grade
-            })
+            missing_count += 1
 
     return {
         "status": "needs_corrections" if mismatched else "validated",
         "matched_students": matched,
         "mismatched_students": mismatched,
-        "missing_students": missing,
         "total_detected": len(essays),
         "total_matched": len(matched),
         "total_mismatched": len(mismatched),
-        "total_missing": len(missing),
+        "total_missing": missing_count,
         "message": f"Found {len(mismatched)} name(s) that need correction" if mismatched else "All student names validated successfully"
     }
 
