@@ -88,10 +88,28 @@ class DatabaseManager:
 
         if "name" not in jobs_columns:
             cursor.execute("ALTER TABLE jobs ADD COLUMN name TEXT")
+        if "rubric" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN rubric TEXT")
+        if "question_text" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN question_text TEXT")
+        if "essay_format" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN essay_format TEXT")
+        if "student_count" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN student_count INTEGER")
+        if "knowledge_base_topic" not in jobs_columns:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN knowledge_base_topic TEXT")
 
         self.conn.commit()
 
-    def create_job(self, job_name: Optional[str] = None) -> str:
+    def create_job(
+        self,
+        job_name: Optional[str] = None,
+        rubric: Optional[str] = None,
+        question_text: Optional[str] = None,
+        essay_format: Optional[str] = None,
+        student_count: Optional[int] = None,
+        knowledge_base_topic: Optional[str] = None,
+    ) -> str:
         """Creates a new job and returns its ID."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_suffix = str(uuid.uuid4())[:8]
@@ -101,8 +119,10 @@ class DatabaseManager:
 
         cursor = self.conn.cursor()
         cursor.execute(
-            "INSERT INTO jobs (id, created_at, name) VALUES (?, ?, ?)",
-            (job_id, created_at, job_name),
+            """INSERT INTO jobs
+               (id, created_at, name, rubric, question_text, essay_format, student_count, knowledge_base_topic)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, created_at, job_name, rubric, question_text, essay_format, student_count, knowledge_base_topic),
         )
         self.conn.commit()
         return job_id
