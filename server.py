@@ -1053,6 +1053,7 @@ def _evaluate_job_core(
 ) -> dict:
     """Core logic for evaluating essays in a job."""
     print(f"[Evaluation-MCP] Evaluating Job {job_id}...", file=sys.stderr)
+    print(f"[Evaluation-MCP] Parameters: context_material={'<provided>' if context_material else '<empty>'}, system_instructions={'<provided>' if system_instructions else '<empty>'}", file=sys.stderr)
 
     # Look up rubric from database if not provided
     if not rubric:
