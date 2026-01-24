@@ -885,6 +885,66 @@ def validate_student_names(job_id: str) -> dict:
 
 
 @mcp.tool
+def get_essay_preview(job_id: str, essay_id: int, max_lines: int = 50) -> dict:
+    """
+    Returns the first N lines of an essay's raw text for student identification.
+
+    Use this when validate_student_names shows a name that needs correction.
+    The teacher can read through the essay text to identify who wrote it.
+
+    Args:
+        job_id: The ID of the job.
+        essay_id: The essay database ID to preview.
+        max_lines: Maximum number of lines to return (default: 50).
+
+    Returns:
+        Dictionary with:
+        - status: "success" or "error"
+        - essay_id: The essay ID
+        - detected_name: Current detected name
+        - preview: First N lines of essay text
+        - total_lines: Total lines in the full essay
+    """
+    essays = DB_MANAGER.get_job_essays(job_id)
+
+    if not essays:
+        return {
+            "status": "error",
+            "message": f"No essays found for job {job_id}"
+        }
+
+    # Find the specific essay
+    essay = next((e for e in essays if e.get("id") == essay_id), None)
+
+    if not essay:
+        return {
+            "status": "error",
+            "message": f"Essay ID {essay_id} not found in job {job_id}"
+        }
+
+    raw_text = essay.get("raw_text", "")
+    if not raw_text:
+        return {
+            "status": "error",
+            "message": f"Essay ID {essay_id} has no text content"
+        }
+
+    # Split into lines and take first N
+    all_lines = raw_text.split("\n")
+    preview_lines = all_lines[:max_lines]
+    preview = "\n".join(preview_lines)
+
+    return {
+        "status": "success",
+        "essay_id": essay_id,
+        "detected_name": essay.get("student_name", "Unknown"),
+        "preview": preview,
+        "total_lines": len(all_lines),
+        "lines_shown": len(preview_lines)
+    }
+
+
+@mcp.tool
 def correct_detected_name(job_id: str, essay_id: int, corrected_name: str) -> dict:
     """
     Corrects a student name in the database BEFORE grading begins.
